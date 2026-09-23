@@ -18,4 +18,9 @@ public interface AgentTool {
 
     /** 执行工具，返回可序列化结果 */
     Object execute(Map<String, Object> args);
+
+    /** 工具入参声明（参数名 → JSON Schema 类型），供模型生成参数；默认无参 */
+    default Map<String, String> parameters() {
+        return Map.of();
+    }
 }

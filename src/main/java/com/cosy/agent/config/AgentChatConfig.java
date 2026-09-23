@@ -1,18 +1,33 @@
 package com.cosy.agent.config;
 
-import org.springframework.ai.chat.client.ChatClient;
+import com.cosy.agent.agent.tool.AgentToolBridging;
+import com.cosy.agent.agent.tool.ToolRegistry;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
+
 /**
- * LLM 会话客户端配置：基于 Spring AI 自动装配的 ChatClient.Builder 构建。
- * Step 2 起用于 ReAct 推理循环（Thought / Action / Observation）。
+ * LLM 会话配置：构建携带工具定义（FunctionTool）的模型调用选项，供 ReAct 循环使用。
  */
 @Configuration
 public class AgentChatConfig {
 
     @Bean
-    public ChatClient chatClient(ChatClient.Builder builder) {
-        return builder.build();
+    public OpenAiChatOptions agentChatOptions(
+            @Value("${spring.ai.openai.chat.options.model:gpt-4o-mini}") String model,
+            @Value("${spring.ai.openai.chat.options.temperature:0.2}") Double temperature,
+            ToolRegistry toolRegistry) {
+        List<OpenAiApi.FunctionTool> tools = toolRegistry.all().stream()
+                .map(AgentToolBridging::toFunctionTool)
+                .toList();
+        return OpenAiChatOptions.builder()
+                .model(model)
+                .temperature(temperature)
+                .tools(tools)
+                .build();
     }
 }

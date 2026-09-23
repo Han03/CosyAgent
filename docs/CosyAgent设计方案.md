@@ -1,6 +1,6 @@
 # CosyAgent 企业级 AI 智能体系统设计方案
 
-> 版本：v0.1（Step 1 落地版）
+> 版本：v0.2（Step 1 ~ Step 2 落地版）
 > 技术底座：Java 17 / Spring Boot 3.5.16 / Spring AI 1.1.8 / Redis / PostgreSQL + PGVector / Resilience4j 2.4.0
 
 ---
@@ -298,45 +298,53 @@ CREATE TABLE agent_trace (
 
 ## 10. 分步实施计划
 
-| 步骤 | 目标 | 关键交付物 | 验收标准 |
-| --- | --- | --- | --- |
-| **Step 1**（本次） | 基础框架 | Maven 工程、分层骨架、核心契约（Agent/Tool/Memory/Vector）、ToolRegistry、统一接口、配置体系、测试 | 工程可编译；`mvn test` 通过；服务可启动；接口可调用 |
-| Step 2 | ReAct 编排 | ReActAgent 实现、ChatClient 接入、ToolRegistry → Spring AI `@Tool` 桥接、迭代与终止逻辑 | 真实 LLM Key 下可完成"规划→调用工具→多轮→回答"闭环 |
-| Step 3 | Redis 多层记忆 | RedisMemoryStore 实现、滚动摘要、长期事实抽取 | 跨会话长期记忆命中；会话恢复不丢上下文 |
-| Step 4 | PGVector 知识检索 | 文档入库管线、RAG 检索注入 | 知识库问答命中率达标；命名空间隔离生效 |
-| Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 |
-| Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 |
+| 步骤 | 目标 | 关键交付物 | 验收标准 | 状态 |
+| --- | --- | --- | --- | --- |
+| **Step 1** | 基础框架 | Maven 工程、分层骨架、核心契约（Agent/Tool/Memory/Vector）、ToolRegistry、统一接口、配置体系、测试 | 工程可编译；`mvn test` 通过；服务可启动；接口可调用 | ✅ 已交付 |
+| **Step 2** | ReAct 编排 | DefaultReActAgent 实现（ChatModel 手动循环）、AgentToolBridging 工具桥接（FunctionTool）、迭代与终止逻辑 | Mock/真实 LLM 下可完成"规划→调用工具→多轮→回答"闭环；超迭代/异常正确终止 | ✅ 已交付 |
+| Step 3 | Redis 多层记忆 | RedisMemoryStore 实现、滚动摘要、长期事实抽取 | 跨会话长期记忆命中；会话恢复不丢上下文 | 待实施 |
+| Step 4 | PGVector 知识检索 | 文档入库管线、RAG 检索注入 | 知识库问答命中率达标；命名空间隔离生效 | 待实施 |
+| Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | 待实施 |
+| Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
 
 每步独立可交付、可回滚；后续步骤不破坏 Step 1 契约（接口稳定是硬约束）。
 
 ---
 
-## 11. Step 1 交付说明
+## 11. 交付说明（Step 1 / Step 2）
 
-### 11.1 已落地内容
+### 11.1 Step 1 已落地内容
 
 - 分层工程骨架（`common / config / agent.core / agent.tool / agent.memory / agent.vector / agent.resilience / service / controller`）；
 - 核心契约：`AgentState`、`AgentMessage`、`AgentContext`、`AgentResult`、`ReActAgent`（接口）、`AgentTool`、`ToolRegistry`、`MemoryLevel`、`MemoryStore`、`VectorKnowledgeStore`；
 - 示例工具：`get_server_time`、`get_server_info`（验证注册表链路）；
 - 统一响应/错误码/全局异常处理；
-- 配置体系：`cosy.agent.*` 与外部依赖全部环境变量化；
-- 测试：上下文加载测试、工具注册表单测、HTTP 接口集成测试。
+- 配置体系：`cosy.agent.*` 与外部依赖全部环境变量化。
 
-### 11.2 运行与验证
+### 11.2 Step 2 已落地内容
+
+- `DefaultReActAgent`：Thought → Action → Observation 循环，**基于 ChatModel 手动驱动**（非 ChatClient 自动执行），完整可控地记录轨迹、执行工具、判定终止；
+- `AgentToolBridging`：`AgentTool`（name/description/parameters）→ OpenAI `FunctionTool`（JSON Schema）桥接，`OpenAiChatOptions` 启动时按注册表生成工具定义；
+- 终止条件：最终回答 / `max-iterations` 超限（TIMEOUT）/ LLM 异常（FAILED）；未知工具或工具执行异常以 Observation 形式回传模型；
+- 测试：`DefaultReActAgentTest`（脚本化 ChatModel 桩：正常闭环、未知工具、超迭代、LLM 异常）+ `AgentApiIntegrationTest`（Mock LLM 端到端）+ 原有测试，共 11 项全部通过。
+
+> 说明：真实 LLM 链路需配置 `OPENAI_API_KEY`；未配置时请求返回 `state=FAILED` 与错误信息（优雅降级，不崩溃）。
+
+### 11.3 运行与验证
 
 ```bash
 mvn test                        # 全部测试通过
-mvn spring-boot:run             # 启动（无需 Redis/LLM，Step 1 不发起外部连接）
+mvn spring-boot:run             # 启动（无 Redis/LLM 时不影响框架运行）
 
 curl http://localhost:8080/api/agent/status
 curl http://localhost:8080/api/agent/tools
 curl -X POST http://localhost:8080/api/agent/chat \
-  -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"你好"}'
+  -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"现在几点？"}'
 ```
 
-### 11.3 仓库地址
+### 11.4 仓库地址
 
-`https://github.com/Han03/CosyAgent.git`（Step 1 代码已推送 main 分支）
+`https://github.com/Han03/CosyAgent.git`（Step 1/Step 2 代码已推送 main 分支）
 
 ---
 
