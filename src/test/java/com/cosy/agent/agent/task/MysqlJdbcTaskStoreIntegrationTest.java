@@ -13,26 +13,27 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * PostgreSQL 任务持久化真实集成测试：默认跳过，仅当环境变量 TASK_IT=true
- * 且本地 PostgreSQL（jdbc:postgresql://localhost:5432/cosy）可用时执行。
+ * MySQL 业务数据持久化真实集成测试：默认跳过，仅当环境变量 TASK_IT=true
+ * 且本地 MySQL（jdbc:mysql://localhost:3306/cosy）可用时执行。
  * 验证 agent_task / agent_trace 表自建、任务/轨迹持久化与查询、幂等追加。
  */
 @EnabledIfEnvironmentVariable(named = "TASK_IT", matches = "true")
-class JdbcTaskStoreIntegrationTest {
+class MysqlJdbcTaskStoreIntegrationTest {
 
-    private JdbcTaskStore store;
+    private MysqlJdbcTaskStore store;
 
     @BeforeEach
     void setUp() {
-        store = new JdbcTaskStore(new TaskProperties("pg", new TaskProperties.Pg(
-                System.getenv().getOrDefault("TASK_IT_URL", "jdbc:postgresql://localhost:5432/cosy"),
-                System.getenv().getOrDefault("TASK_IT_USER", "postgres"),
-                System.getenv().getOrDefault("TASK_IT_PASSWORD", "postgres")), null), TestResilience.defaultResilience());
+        store = new MysqlJdbcTaskStore(new TaskProperties("mysql", null, new TaskProperties.Mysql(
+                System.getenv().getOrDefault("TASK_IT_MYSQL_URL",
+                        "jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"),
+                System.getenv().getOrDefault("TASK_IT_MYSQL_USER", "cosy"),
+                System.getenv().getOrDefault("TASK_IT_MYSQL_PASSWORD", "cosy"))), TestResilience.defaultResilience());
     }
 
     @Test
-    void persistsTaskAndTraceOnRealPostgres() {
-        AgentTask task = store.createTask("s-it", "u1", "查询任务持久化");
+    void persistsTaskAndTraceOnRealMysql() {
+        AgentTask task = store.createTask("s-it-mysql", "u1", "查询任务持久化");
 
         store.updateTask(task.taskId(), AgentState.COMPLETED, "持久化成功", 2, 88L, null);
         store.appendTrace(task.taskId(), List.of(
@@ -55,11 +56,11 @@ class JdbcTaskStoreIntegrationTest {
     }
 
     @Test
-    void findBySessionFiltersBySessionOnRealPostgres() {
-        AgentTask task = store.createTask("s-it-list", "u1", "列表");
+    void findBySessionFiltersBySessionOnRealMysql() {
+        AgentTask task = store.createTask("s-it-mysql-list", "u1", "列表");
         store.updateTask(task.taskId(), AgentState.FAILED, null, 1, 10L, "模型调用失败");
 
-        List<AgentTask> tasks = store.findBySession("s-it-list", 20);
+        List<AgentTask> tasks = store.findBySession("s-it-mysql-list", 20);
         assertThat(tasks).hasSize(1);
         assertThat(tasks.get(0).state()).isEqualTo(AgentState.FAILED);
         assertThat(store.findBySession("s-not-exist", 20)).isEmpty();

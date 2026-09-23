@@ -3,6 +3,7 @@ package com.cosy.agent.agent.core;
 import com.cosy.agent.agent.memory.MemoryLevel;
 import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
+import com.cosy.agent.agent.mock.MockScriptEngine;
 import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.resilience.ResilienceTarget;
 import com.cosy.agent.agent.tool.AgentTool;
@@ -75,12 +76,14 @@ public class DefaultReActAgent implements ReActAgent {
     private final ResilienceSupport resilience;
     private final AgentProperties properties;
     private final VectorProperties vectorProperties;
+    private final MockScriptEngine mockEngine;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public DefaultReActAgent(ChatModel chatModel, OpenAiChatOptions chatOptions,
                              ToolRegistry toolRegistry, MemoryStore memoryStore,
                              VectorKnowledgeStore vectorStore, ResilienceSupport resilience,
-                             AgentProperties properties, VectorProperties vectorProperties) {
+                             AgentProperties properties, VectorProperties vectorProperties,
+                             MockScriptEngine mockEngine) {
         this.chatModel = chatModel;
         this.chatOptions = chatOptions;
         this.toolRegistry = toolRegistry;
@@ -89,6 +92,7 @@ public class DefaultReActAgent implements ReActAgent {
         this.resilience = resilience;
         this.properties = properties;
         this.vectorProperties = vectorProperties;
+        this.mockEngine = mockEngine;
     }
 
     @Override
@@ -127,10 +131,12 @@ public class DefaultReActAgent implements ReActAgent {
 
         for (int i = 0; i < context.maxIterations(); i++) {
             iterations++;
+            boolean useMock = isMockActive(context);
             ChatResponse response;
             try {
                 response = resilience.execute(ResilienceTarget.LLM,
-                        () -> chatModel.call(new Prompt(messages, chatOptions)));
+                        () -> useMock ? mockEngine.generate(new Prompt(messages, chatOptions))
+                                : chatModel.call(new Prompt(messages, chatOptions)));
             } catch (Exception e) {
                 log.error("LLM 调用失败，sessionId={}, iteration={}", context.sessionId(), iterations, e);
                 state = AgentState.FAILED;
@@ -189,16 +195,24 @@ public class DefaultReActAgent implements ReActAgent {
                 System.currentTimeMillis() - start, errorMessage, taskId);
     }
 
-    /**
-     * 组装系统提示：基础 ReAct 指令 + 会话记忆 + 长期记忆 + 知识库检索结果（RAG）。
-     * 记忆/知识读取失败时降级（不阻断推理）。
-     */
+    /** 组装系统提示：基础 ReAct 指令 + 会话记忆 + 长期记忆 + 知识库检索结果（RAG）。
+     * 记忆/知识读取失败时降级（不阻断推理）。 */
     private String buildSystemPrompt(AgentContext context, String userInput) {
         StringBuilder sb = new StringBuilder(SYSTEM_PROMPT);
         appendMemoryBlock(sb, "会话记忆", MemoryLevel.SESSION, context.sessionId());
         appendMemoryBlock(sb, "用户长期记忆", MemoryLevel.LONG_TERM, context.userId());
         appendKnowledgeBlock(sb, context, userInput);
         return sb.toString();
+    }
+
+    /** 请求级 Mock 判定：X-Cosy-Mock 请求头注入的覆盖值优先，缺失时回退全局配置；
+     * Mock 引擎未装配（无 MockScriptEngine bean）时恒走真实模型。 */
+    private boolean isMockActive(AgentContext context) {
+        if (mockEngine == null) {
+            return false;
+        }
+        Boolean override = context.mockOverride();
+        return override != null ? override : properties.mock().enabled();
     }
 
     private void appendMemoryBlock(StringBuilder sb, String label, MemoryLevel level, String namespace) {

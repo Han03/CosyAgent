@@ -38,17 +38,17 @@ public class AgentOrchestrator {
         this.taskStore = taskStore;
     }
 
-    public AgentResult chat(String sessionId, String userId, String input) {
+    public AgentResult chat(String sessionId, String userId, String input, Boolean mockOverride) {
         AgentTask task = taskStore.createTask(sessionId, userId, input);
         markRunning(task);
-        AgentContext context = AgentContext.create(sessionId, userId, properties.maxIterations(), task.taskId());
+        AgentContext context = AgentContext.create(sessionId, userId, properties.maxIterations(), task.taskId(), mockOverride);
         AgentResult result = reactAgent.run(context, input);
         finish(task.taskId(), result);
         return result;
     }
 
     /** 断点恢复：基于历史任务的轨迹重建上下文，注入历史后继续运行（新任务） */
-    public AgentResult resume(String sourceTaskId, String input) {
+    public AgentResult resume(String sourceTaskId, String input, Boolean mockOverride) {
         TaskStore.TaskDetail source = taskStore.findById(sourceTaskId)
                 .orElseThrow(() -> new BizException(ErrorCode.TASK_NOT_FOUND, "任务不存在: " + sourceTaskId));
         AgentTask sourceTask = source.task();
@@ -57,7 +57,7 @@ public class AgentOrchestrator {
         AgentTask task = taskStore.createTask(sourceTask.sessionId(), sourceTask.userId(), input);
         markRunning(task);
         AgentContext context = AgentContext.create(
-                sourceTask.sessionId(), sourceTask.userId(), properties.maxIterations(), task.taskId());
+                sourceTask.sessionId(), sourceTask.userId(), properties.maxIterations(), task.taskId(), mockOverride);
         AgentResult result = reactAgent.run(context, input, history);
         finish(task.taskId(), result);
         return result;

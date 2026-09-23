@@ -4,6 +4,7 @@ import com.cosy.agent.TestResilience;
 import com.cosy.agent.agent.memory.MemoryLevel;
 import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
+import com.cosy.agent.agent.mock.MockScriptEngine;
 import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.tool.ServerTimeTool;
 import com.cosy.agent.agent.tool.ToolRegistry;
@@ -64,7 +65,7 @@ class DefaultReActAgentTest {
         VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
         ToolRegistry registry = new ToolRegistry(List.of(new ServerTimeTool()));
         agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), registry, memoryStore,
-                vectorStore, TestResilience.defaultResilience(), properties, vectorProperties);
+                vectorStore, TestResilience.defaultResilience(), properties, vectorProperties, null);
         when(memoryStore.list(any(), any())).thenReturn(List.of());
         when(memoryStore.load(any(), any(), any())).thenReturn(Optional.empty());
         when(vectorStore.search(any(), any(), anyInt(), anyDouble())).thenReturn(List.of());
@@ -76,7 +77,7 @@ class DefaultReActAgentTest {
         VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
         return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(),
                 new ToolRegistry(List.of(new ServerTimeTool())), memoryStore, vectorStore,
-                resilience, properties, vectorProperties);
+                resilience, properties, vectorProperties, null);
     }
 
     private AssistantMessage toolCallMessage(String content, String name, String arguments) {
@@ -290,5 +291,43 @@ class DefaultReActAgentTest {
         when(chatModel.call(any(Prompt.class))).thenReturn(response("完成。"));
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-123"), "你好");
         assertThat(result.taskId()).isEqualTo("task-123");
+    }
+
+    @Test
+    void usesMockEngineWhenRequestOverrideIsTrue() {
+        MockScriptEngine engine = mock(MockScriptEngine.class);
+        when(engine.generate(any(Prompt.class))).thenReturn(response("Mock 回答。"));
+        agent = agentWithMockEngine(engine);
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("真实模型回答。"));
+
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-1", Boolean.TRUE), "你好");
+
+        assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
+        assertThat(result.answer()).isEqualTo("Mock 回答。");
+        verify(engine).generate(any(Prompt.class));
+        verify(chatModel, org.mockito.Mockito.never()).call(any(Prompt.class));
+    }
+
+    @Test
+    void fallsBackToRealModelWhenRequestOverrideIsFalse() {
+        MockScriptEngine engine = mock(MockScriptEngine.class);
+        when(engine.generate(any(Prompt.class))).thenReturn(response("Mock 回答。"));
+        agent = agentWithMockEngine(engine);
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("真实模型回答。"));
+
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-1", Boolean.FALSE), "你好");
+
+        assertThat(result.answer()).isEqualTo("真实模型回答。");
+        verify(engine, org.mockito.Mockito.never()).generate(any(Prompt.class));
+        verify(chatModel).call(any(Prompt.class));
+    }
+
+    private DefaultReActAgent agentWithMockEngine(MockScriptEngine engine) {
+        AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
+                Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
+        VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
+        return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(),
+                new ToolRegistry(List.of(new ServerTimeTool())), memoryStore, vectorStore,
+                TestResilience.defaultResilience(), properties, vectorProperties, engine);
     }
 }

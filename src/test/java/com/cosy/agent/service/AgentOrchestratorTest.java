@@ -53,7 +53,7 @@ class AgentOrchestratorTest {
 
     @Test
     void chatPersistsTaskLifecycleWithTrace() {
-        AgentResult result = orchestrator.chat("s1", "u1", "你好");
+        AgentResult result = orchestrator.chat("s1", "u1", "你好", null);
 
         assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
         assertThat(result.taskId()).isNotBlank();
@@ -87,7 +87,7 @@ class AgentOrchestratorTest {
                         Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT),
                 taskStore);
 
-        AgentResult result = failOrchestrator.chat("s1", "u1", "你好");
+        AgentResult result = failOrchestrator.chat("s1", "u1", "你好", null);
         TaskStore.TaskDetail detail = taskStore.findById(result.taskId()).orElseThrow();
         assertThat(detail.task().state()).isEqualTo(AgentState.FAILED);
         assertThat(detail.task().errorMessage()).isEqualTo("模型调用失败");
@@ -95,9 +95,9 @@ class AgentOrchestratorTest {
 
     @Test
     void resumeFeedsHistoryAndCreatesNewTask() {
-        AgentResult first = orchestrator.chat("s1", "u1", "第一步");
+        AgentResult first = orchestrator.chat("s1", "u1", "第一步", null);
 
-        AgentResult resumed = orchestrator.resume(first.taskId(), "继续");
+        AgentResult resumed = orchestrator.resume(first.taskId(), "继续", null);
 
         assertThat(resumed.state()).isEqualTo(AgentState.COMPLETED);
         assertThat(resumed.taskId()).isNotEqualTo(first.taskId()); // 新任务
@@ -110,14 +110,14 @@ class AgentOrchestratorTest {
 
     @Test
     void resumeRejectsUnknownTask() {
-        assertThatThrownBy(() -> orchestrator.resume("task-unknown", "继续"))
+        assertThatThrownBy(() -> orchestrator.resume("task-unknown", "继续", null))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("任务不存在");
     }
 
     @Test
     void taskIdSurfacesInAgentResult() {
-        AgentResult result = orchestrator.chat("s1", "u1", "你好");
+        AgentResult result = orchestrator.chat("s1", "u1", "你好", null);
         assertThat(result.taskId()).isNotBlank();
     }
 }

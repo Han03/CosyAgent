@@ -12,15 +12,20 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Agent 对外 HTTP 接口（Step 6 起新增任务查询/审计/断点恢复）。
+ *
+ * <p>请求头 {@code X-Cosy-Mock}: 请求级 Mock 开关（true/false），覆盖全局
+ * {@code cosy.agent.mock.enabled}；不携带时回退全局配置。供客户端设置页动态切换。</p>
  */
 @RestController
 @RequestMapping("/api/agent")
@@ -38,8 +43,9 @@ public class AgentController {
 
     /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID） */
     @PostMapping("/chat")
-    public Result<AgentResult> chat(@Valid @RequestBody ChatRequest request) {
-        return Result.ok(orchestrator.chat(request.sessionId(), "anonymous", request.message()));
+    public Result<AgentResult> chat(@Valid @RequestBody ChatRequest request,
+                                    @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader) {
+        return Result.ok(orchestrator.chat(request.sessionId(), "anonymous", request.message(), parseMock(mockHeader)));
     }
 
     /** 任务详情（主记录 + 执行轨迹审计，Step 6） */
@@ -62,8 +68,9 @@ public class AgentController {
 
     /** 断点恢复：以历史任务轨迹为上下文继续执行（新任务，Step 6） */
     @PostMapping("/tasks/{taskId}/resume")
-    public Result<AgentResult> resume(@PathVariable String taskId, @Valid @RequestBody ResumeRequest request) {
-        return Result.ok(orchestrator.resume(taskId, request.message()));
+    public Result<AgentResult> resume(@PathVariable String taskId, @Valid @RequestBody ResumeRequest request,
+                                      @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader) {
+        return Result.ok(orchestrator.resume(taskId, request.message(), parseMock(mockHeader)));
     }
 
     /** 已注册工具列表 */
@@ -79,6 +86,18 @@ public class AgentController {
                 "application", "cosy-agent",
                 "step", "6",
                 "tools", toolRegistry.size()));
+    }
+
+    /** 解析 X-Cosy-Mock 请求头：true/1/on → 开；false/0/off → 关；其他/缺失 → 回退全局配置 */
+    private Boolean parseMock(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        return switch (header.trim().toLowerCase(Locale.ROOT)) {
+            case "true", "1", "on" -> Boolean.TRUE;
+            case "false", "0", "off" -> Boolean.FALSE;
+            default -> null;
+        };
     }
 
     public record ChatRequest(

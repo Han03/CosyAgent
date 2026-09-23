@@ -43,6 +43,7 @@ cosy:
     mock:
       # LLM 端到端 Mock 模块（Step M）：开启后以剧本引擎替代真实 LLM 推理，
       # 其余全链路（编排/工具执行/记忆读写）真实运行；关闭则走真实 LLM。
+      # 请求头 X-Cosy-Mock: true|false 可请求级覆盖本开关（优先级更高），供客户端设置页动态切换。
       enabled: ${COSY_AGENT_MOCK_ENABLED:false}
       mode: ${COSY_AGENT_MOCK_MODE:random}   # random：全随机（演示）；scripted：固定剧本+种子（CI 可复现）
       script: ${COSY_AGENT_MOCK_SCRIPT:time} # scripted 模式指定剧本 id
@@ -55,13 +56,19 @@ cosy:
         error: 0.05          # 模型异常（FAILED 终止路径）
     task:
       # 任务状态持久化（Step 6）：store=memory 为内存实现（默认，无外部依赖，重启即失）；
-      # store=pg 走 PostgreSQL（生产形态，表 agent_task/agent_trace 自建，需 PostgreSQL 运行）
+      # store=pg 走 PostgreSQL（生产形态，表 agent_task/agent_trace 自建，需 PostgreSQL 运行）；
+      # store=mysql 走 MySQL 存储业务数据（同构表结构，需 MySQL 运行）
       store: ${COSY_AGENT_TASK_STORE:memory}
       pg:
         # store=pg 时生效（原生 JDBC，不触发 DataSource 自动配置）
         url: ${COSY_AGENT_TASK_PG_URL:jdbc:postgresql://localhost:5432/cosy}
         username: ${COSY_AGENT_TASK_PG_USER:postgres}
         password: ${COSY_AGENT_TASK_PG_PASSWORD:postgres}
+      mysql:
+        # store=mysql 时生效（原生 JDBC，不触发 DataSource 自动配置）
+        url: ${COSY_AGENT_TASK_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+        username: ${COSY_AGENT_TASK_MYSQL_USER:cosy}
+        password: ${COSY_AGENT_TASK_MYSQL_PASSWORD:cosy}
     security:
       # API 鉴权（Step 6 生产化）：配置后 /api/** 需携带 X-API-Key 请求头；
       # 留空（默认）不启用，便于本地开发与测试。
