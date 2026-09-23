@@ -34,7 +34,7 @@ class RedisMemoryStoreTest {
         valueOps = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(valueOps);
         properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
-                Duration.ofDays(180), Duration.ofMinutes(10));
+                Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
         store = new RedisMemoryStore(redis, properties);
     }
 

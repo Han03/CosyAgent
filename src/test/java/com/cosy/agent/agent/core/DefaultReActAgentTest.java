@@ -44,7 +44,7 @@ class DefaultReActAgentTest {
         chatModel = mock(ChatModel.class);
         memoryStore = mock(MemoryStore.class);
         AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
-                Duration.ofDays(180), Duration.ofMinutes(10));
+                Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
         ToolRegistry registry = new ToolRegistry(List.of(new ServerTimeTool()));
         agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), registry, memoryStore, properties);
         when(memoryStore.list(any(), any())).thenReturn(List.of());

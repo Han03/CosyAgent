@@ -26,6 +26,19 @@ cosy:
     session-timeout: 30m     # 会话记忆 TTL（Step 3 生效）
     long-term-timeout: 180d  # 长期记忆 TTL（Step 3 生效）
     working-timeout: 10m     # 工作记忆 TTL（Step 3 生效）
+    mock:
+      # LLM 端到端 Mock 模块（Step M）：开启后以剧本引擎替代真实 LLM 推理，
+      # 其余全链路（编排/工具执行/记忆读写）真实运行；关闭则走真实 LLM。
+      enabled: ${COSY_AGENT_MOCK_ENABLED:false}
+      mode: ${COSY_AGENT_MOCK_MODE:random}   # random：全随机（演示）；scripted：固定剧本+种子（CI 可复现）
+      script: ${COSY_AGENT_MOCK_SCRIPT:time} # scripted 模式指定剧本 id
+      seed: ${COSY_AGENT_MOCK_SEED:42}       # scripted 模式随机种子
+      max-turns: ${COSY_AGENT_MOCK_MAX_TURNS:8}  # mock 自身回合上限
+      probability:
+        extra-turn: 0.4      # 追加一轮工具调用（模拟多考虑一轮）
+        unknown-tool: 0.1    # 工具名替换为未注册名（未知工具自愈路径）
+        multi-tool: 0.1      # 单轮多工具并行
+        error: 0.05          # 模型异常（FAILED 终止路径）
 
 server:
   port: ${SERVER_PORT:8080}

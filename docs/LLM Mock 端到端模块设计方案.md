@@ -1,8 +1,8 @@
 # CosyAgent LLM 端到端 Mock 模块设计方案
 
-> 版本：v0.1（设计稿，待评审后实施）
+> 版本：v0.2（已落地，35 项测试通过）
 > 前置：Step 1（基础框架）/ Step 2（ReAct 编排）/ Step 3（Redis 多层记忆）已交付
-> 关联主文档：`docs/CosyAgent设计方案.md`（Step 1 ~ Step 3）
+> 关联主文档：`docs/CosyAgent设计方案.md`（Step 1 ~ Step 3 + Step M）
 
 ---
 
@@ -162,13 +162,21 @@ cosy:
 
 ---
 
-## 8. 实施步骤（评审通过后执行）
+## 8. 实施步骤（已全部完成）
 
-| 步骤 | 内容 | 验收标准 |
+| 步骤 | 内容 | 状态 |
 | --- | --- | --- |
-| M1 | `agent.mock` 核心：MockProperties 配置、MockRandomSource、MockTurn/MockScript、MockScriptEngine、MockChatModelDecorator、MockChatConfig 条件装配 | 编译通过；装饰器路由单测通过 |
-| M2 | 剧本库 5 场景 + 随机性注入（附加轮/未知工具/多工具/异常） | 引擎单测全过；seed 可复现性验证 |
-| M3 | 集成测试 + 真实运行验证（28080）+ 文档同步（主方案附录/README）+ commit 推送 GitHub | 全量测试通过；mock 开关下全链路可演示；GitHub 推送成功 |
+| M1 | `agent.mock` 核心：MockProperties 配置、MockRandomSource、MockTurn/MockScript、MockScriptEngine、MockChatModelDecorator、MockChatConfig 条件装配 | ✅ 已完成 |
+| M2 | 剧本库 5 场景 + 随机性注入（附加轮/未知工具/多工具/异常） | ✅ 已完成 |
+| M3 | 集成测试 + 真实运行验证（28080）+ 文档同步（主方案附录/README）+ commit 推送 GitHub | ✅ 已完成 |
+
+### 8.1 落地说明
+
+- 代码：`agent.mock` 6 个类 + `MockChatConfig` 条件装配 + `AgentProperties.Mock` 嵌套配置 + `application.yml`；
+- 随机源修正：random 模式以「用户消息哈希 ^ 运行时刻」为锚，保证同问题多次运行输出不同；scripted 模式固定种子完全可复现；
+- 剧本关键词优先级：时间 → 综合/巡检/多轮 → 服务器/信息 → 自愈 → 循环超限；
+- 测试：`MockScriptEngineTest` 8 项（含 seed 可复现、unknown-tool/multi-tool/error/extra-turn 注入、self-heal、loop-limit）+ `MockChatModelDecoratorTest` 2 项 + `MockE2eIntegrationTest` 2 项（HTTP 全链路 + 自愈 + Redis 记忆持久化断言，`REDIS_IT=true` 时验证），全量 35 项通过；
+- 真实运行验证（`COSY_AGENT_MOCK_ENABLED=true SERVER_PORT=28080`）：health=UP；同一问题多次调用输出文案/迭代数不同（随机性生效）；「综合巡检」走多工具剧本（time→info→time），「自愈演示」走未知工具自愈路径。
 
 ---
 

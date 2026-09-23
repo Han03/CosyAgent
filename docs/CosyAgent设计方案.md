@@ -1,6 +1,6 @@
 # CosyAgent 企业级 AI 智能体系统设计方案
 
-> 版本：v0.3（Step 1 ~ Step 3 落地版）
+> 版本：v0.4（Step 1 ~ Step 3 + Step M 落地版）
 > 技术底座：Java 17 / Spring Boot 3.5.16 / Spring AI 1.1.8 / Redis / PostgreSQL + PGVector / Resilience4j 2.4.0
 
 ---
@@ -313,13 +313,13 @@ CREATE TABLE agent_trace (
 | Step 4 | PGVector 知识检索 | 文档入库管线、RAG 检索注入 | 知识库问答命中率达标；命名空间隔离生效 | 待实施 |
 | Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | 待实施 |
 | Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
-| Step M | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性 | 设计稿（见附录 13） |
+| **Step M** | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性；35 项测试通过 | ✅ 已交付 |
 
 每步独立可交付、可回滚；后续步骤不破坏 Step 1 契约（接口稳定是硬约束）。
 
 ---
 
-## 11. 交付说明（Step 1 ~ Step 3）
+## 11. 交付说明（Step 1 ~ Step 3 + Step M）
 
 ### 11.1 Step 1 已落地内容
 
@@ -361,7 +361,14 @@ curl -X POST http://localhost:8080/api/agent/chat \
 
 ### 11.5 仓库地址
 
-`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 代码已推送 main 分支）
+`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 + Step M 代码已推送 main 分支）
+
+### 11.6 Step M 已落地内容
+
+- `MockChatModelDecorator`：ChatModel 装饰器，`cosy.agent.mock.enabled` 开关路由（开启→剧本引擎，关闭→透传真实模型）；`MockChatConfig` 条件装配（@Primary 覆盖自动配置 Bean `openAiChatModel`）；
+- `MockScriptEngine`：按 Prompt 历史推导推进位置（无共享状态，支持并发）；5 个预置剧本覆盖单工具 / 多轮多工具 / 未知工具自愈 / 超迭代路径；最终回答引用真实工具观察结果；
+- 随机性：scripted 固定种子可复现（CI）；random 以用户消息哈希+运行时刻为锚，每次运行独立随机；行为注入（附加轮 / 未知工具 / 多工具并行 / 模型异常）概率可配；
+- 全链路验证：`MockE2eIntegrationTest`（无真实 Key 走通 HTTP→ReAct→工具执行→记忆持久化）+ `MockScriptEngineTest`（8 项）+ `MockChatModelDecoratorTest`（2 项），全量 35 项通过；真实运行验证随机性与多剧本切换正常。
 
 ---
 
@@ -383,4 +390,4 @@ curl -X POST http://localhost:8080/api/agent/chat \
 
 独立设计文档：[`LLM Mock 端到端模块设计方案.md`](LLM%20Mock%20端到端模块设计方案.md)（v0.1 设计稿）。
 
-核心要点：`MockChatModelDecorator`（ChatModel 装饰器，`cosy.agent.mock.enabled` 开关路由）+ 剧本引擎（预置 5 场景，覆盖单工具/多工具/自愈/超迭代路径）+ 双层随机性（剧本选择与行为概率注入），`scripted+seed` 可复现、`random` 真随机；仅替换 LLM 推理，工具执行、ReAct 编排、Redis 记忆全链路真实运行。
+核心要点：`MockChatModelDecorator`（ChatModel 装饰器，`cosy.agent.mock.enabled` 开关路由）+ 剧本引擎（预置 5 场景，覆盖单工具/多工具/自愈/超迭代路径）+ 双层随机性（剧本选择与行为概率注入），`scripted+seed` 可复现、`random` 真随机；仅替换 LLM 推理，工具执行、ReAct 编排、Redis 记忆全链路真实运行。**已落地（35 项测试通过）。**
