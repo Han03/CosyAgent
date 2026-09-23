@@ -5,7 +5,9 @@ import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
 import com.cosy.agent.agent.tool.ServerTimeTool;
 import com.cosy.agent.agent.tool.ToolRegistry;
+import com.cosy.agent.agent.vector.VectorKnowledgeStore;
 import com.cosy.agent.config.AgentProperties;
+import com.cosy.agent.config.VectorProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,6 +25,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
@@ -31,24 +35,29 @@ import static org.mockito.Mockito.when;
 
 /**
  * ReAct 循环单元测试：以脚本化 ChatModel 桩驱动，验证
- * 工具调用 → Observation 回传 → 最终回答 / 终止条件，以及 Step 3 记忆注入与持久化。
+ * 工具调用 → Observation 回传 → 最终回答 / 终止条件，以及 Step 3 记忆注入与持久化、Step 4 RAG 注入。
  */
 class DefaultReActAgentTest {
 
     private ChatModel chatModel;
     private MemoryStore memoryStore;
+    private VectorKnowledgeStore vectorStore;
     private DefaultReActAgent agent;
 
     @BeforeEach
     void setUp() {
         chatModel = mock(ChatModel.class);
         memoryStore = mock(MemoryStore.class);
+        vectorStore = mock(VectorKnowledgeStore.class);
         AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
                 Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
+        VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
         ToolRegistry registry = new ToolRegistry(List.of(new ServerTimeTool()));
-        agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), registry, memoryStore, properties);
+        agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), registry, memoryStore,
+                vectorStore, properties, vectorProperties);
         when(memoryStore.list(any(), any())).thenReturn(List.of());
         when(memoryStore.load(any(), any(), any())).thenReturn(Optional.empty());
+        when(vectorStore.search(any(), any(), anyInt(), anyDouble())).thenReturn(List.of());
     }
 
     private AssistantMessage toolCallMessage(String content, String name, String arguments) {
@@ -155,5 +164,31 @@ class DefaultReActAgentTest {
 
         assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
         assertThat(result.answer()).isEqualTo("无记忆回答。");
+    }
+
+    @Test
+    void injectsKnowledgeHitsIntoSystemPrompt() {
+        when(vectorStore.search(eq("default"), eq("如何重置密码"), eq(5), eq(0.15)))
+                .thenReturn(List.of(new VectorKnowledgeStore.KnowledgeHit("kb#0", "重置密码：进入设置页点击重置。", 0.91)));
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("好的。"));
+
+        agent.run(AgentContext.create("s1", "u1", 5), "如何重置密码");
+
+        ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel, atLeastOnce()).call(captor.capture());
+        SystemMessage system = (SystemMessage) captor.getValue().getInstructions().get(0);
+        assertThat(system.getText())
+                .contains("【知识库检索结果】").contains("重置密码：进入设置页点击重置。");
+    }
+
+    @Test
+    void degradesGracefullyWhenKnowledgeSearchFails() {
+        when(vectorStore.search(any(), any(), anyInt(), anyDouble())).thenThrow(new RuntimeException("pg down"));
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("直答。"));
+
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
+
+        assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
+        assertThat(result.answer()).isEqualTo("直答。");
     }
 }

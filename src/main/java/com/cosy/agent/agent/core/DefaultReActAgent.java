@@ -5,7 +5,9 @@ import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
 import com.cosy.agent.agent.tool.AgentTool;
 import com.cosy.agent.agent.tool.ToolRegistry;
+import com.cosy.agent.agent.vector.VectorKnowledgeStore;
 import com.cosy.agent.config.AgentProperties;
+import com.cosy.agent.config.VectorProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,6 +39,9 @@ import java.util.Optional;
  *
  * <p>Step 3 记忆集成：运行前注入会话记忆与长期记忆到系统提示；
  * 运行后持久化最近对话（滚动窗口）与工作状态。记忆读写失败自动降级为无记忆直答。</p>
+ *
+ * <p>Step 4 RAG 集成：运行前以用户输入检索知识库（TopK + 阈值），命中注入系统提示；
+ * 检索失败自动降级（跳过 RAG，不阻断推理）。</p>
  */
 @Service
 public class DefaultReActAgent implements ReActAgent {
@@ -60,16 +65,21 @@ public class DefaultReActAgent implements ReActAgent {
     private final OpenAiChatOptions chatOptions;
     private final ToolRegistry toolRegistry;
     private final MemoryStore memoryStore;
+    private final VectorKnowledgeStore vectorStore;
     private final AgentProperties properties;
+    private final VectorProperties vectorProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public DefaultReActAgent(ChatModel chatModel, OpenAiChatOptions chatOptions,
-                             ToolRegistry toolRegistry, MemoryStore memoryStore, AgentProperties properties) {
+                             ToolRegistry toolRegistry, MemoryStore memoryStore,
+                             VectorKnowledgeStore vectorStore, AgentProperties properties, VectorProperties vectorProperties) {
         this.chatModel = chatModel;
         this.chatOptions = chatOptions;
         this.toolRegistry = toolRegistry;
         this.memoryStore = memoryStore;
+        this.vectorStore = vectorStore;
         this.properties = properties;
+        this.vectorProperties = vectorProperties;
     }
 
     @Override
@@ -82,7 +92,7 @@ public class DefaultReActAgent implements ReActAgent {
         long start = System.currentTimeMillis();
 
         List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(buildSystemPrompt(context)));
+        messages.add(new SystemMessage(buildSystemPrompt(context, userInput)));
         messages.add(new UserMessage(userInput));
 
         List<AgentMessage> trace = new ArrayList<>();
@@ -151,13 +161,14 @@ public class DefaultReActAgent implements ReActAgent {
     }
 
     /**
-     * 组装系统提示：基础 ReAct 指令 + 会话记忆 + 长期记忆。
-     * 记忆读取失败时降级（不阻断推理）。
+     * 组装系统提示：基础 ReAct 指令 + 会话记忆 + 长期记忆 + 知识库检索结果（RAG）。
+     * 记忆/知识读取失败时降级（不阻断推理）。
      */
-    private String buildSystemPrompt(AgentContext context) {
+    private String buildSystemPrompt(AgentContext context, String userInput) {
         StringBuilder sb = new StringBuilder(SYSTEM_PROMPT);
         appendMemoryBlock(sb, "会话记忆", MemoryLevel.SESSION, context.sessionId());
         appendMemoryBlock(sb, "用户长期记忆", MemoryLevel.LONG_TERM, context.userId());
+        appendKnowledgeBlock(sb, context, userInput);
         return sb.toString();
     }
 
@@ -170,6 +181,23 @@ public class DefaultReActAgent implements ReActAgent {
             }
         } catch (Exception e) {
             log.warn("记忆读取失败，降级为无记忆: level={}, namespace={}", level, namespace, e);
+        }
+    }
+
+    /** 以用户输入检索知识库（RAG），命中注入系统提示；失败降级跳过。 */
+    private void appendKnowledgeBlock(StringBuilder sb, AgentContext context, String userInput) {
+        try {
+            List<VectorKnowledgeStore.KnowledgeHit> hits = vectorStore.search(
+                    vectorProperties.namespace(), userInput, vectorProperties.topK(), vectorProperties.minScore());
+            if (!hits.isEmpty()) {
+                sb.append("\n\n【知识库检索结果】\n");
+                hits.forEach(hit -> sb.append("- [").append(hit.docId()).append("] ")
+                        .append(hit.content()).append('\n'));
+                log.info("知识库命中 {} 条注入系统提示: sessionId={}, namespace={}",
+                        hits.size(), context.sessionId(), vectorProperties.namespace());
+            }
+        } catch (Exception e) {
+            log.warn("知识检索失败，降级跳过 RAG: sessionId={}", context.sessionId(), e);
         }
     }
 

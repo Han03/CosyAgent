@@ -1,6 +1,7 @@
 package com.cosy.agent;
 
 import com.cosy.agent.config.AgentProperties;
+import com.cosy.agent.config.VectorProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -12,7 +13,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
  * 后续能力按 docs/CosyAgent设计方案.md 的分步计划接入。</p>
  */
 @SpringBootApplication
-@EnableConfigurationProperties(AgentProperties.class)
+@EnableConfigurationProperties({AgentProperties.class, VectorProperties.class})
 public class CosyAgentApplication {
 
     public static void main(String[] args) {

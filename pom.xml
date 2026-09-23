@@ -72,7 +72,14 @@
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
 
-        <!-- Step 4 引入 PGVector：spring-ai-starter-vector-store-pgvector（版本由 spring-ai-bom 管理） -->
+        <!-- Step 4 引入 PGVector：PostgreSQL 驱动（store=pgvector 时生效，原生 JDBC；
+             未安装 PostgreSQL 时默认 memory 模式不受影响，不触发 DataSource 自动配置） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

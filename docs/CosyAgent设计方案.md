@@ -1,6 +1,6 @@
 # CosyAgent 企业级 AI 智能体系统设计方案
 
-> 版本：v0.4（Step 1 ~ Step 3 + Step M 落地版）
+> 版本：v0.5（Step 1 ~ Step 3 + Step M + Step 4 落地版）
 > 技术底座：Java 17 / Spring Boot 3.5.16 / Spring AI 1.1.8 / Redis / PostgreSQL + PGVector / Resilience4j 2.4.0
 
 ---
@@ -192,11 +192,11 @@ cosy:lock:{taskId}                  # 任务并发锁（用于幂等/防重入�
 - `RedisMemoryStore`：实现 `MemoryStore` 契约，Key 规范 `cosy:{level}:{namespace}:{key}`（work/session/long），TTL 分层（WORKING=10m / SESSION=30m / LONG_TERM=180d，均可配置）；
 - 记忆接入：`DefaultReActAgent` 运行前注入【会话记忆】+【用户长期记忆】到系统提示，运行后持久化滚动会话记录（最近 6 条）与工作状态；
 - 降级：记忆读写失败自动降级为无记忆直答（仅告警，不阻断推理）；
-- 检索：当前为关键词包含过滤，Step 4 升级为向量化语义检索。
+- 检索：Step 3 用关键词包含过滤；Step 4 已升级为向量化语义检索（InMemory/PGVector 双实现，RAG 注入见第 6 节）。
 
 ---
 
-## 6. 知识检索设计：PGVector（Step 4）
+## 6. 知识检索设计：PGVector（Step 4 已实现）
 
 ### 6.1 处理链路
 
@@ -212,6 +212,17 @@ cosy:lock:{taskId}                  # 任务并发锁（用于幂等/防重入�
 - **检索参数**：`topK=5`、最小相似度阈值 0.7（按模型向量空间可调）；
 - **混合检索**（进阶）：PGVector 向量检索 + PostgreSQL 全文检索（`tsvector`）加权融合，提升专业术语召回；
 - **版本一致性**：Embedding 模型固定版本，模型升级需重建向量（记录模型指纹于元数据）。
+
+### 6.3 实现状态（Step 4 已落地）
+
+- **存储双实现**（`cosy.agent.vector.store` 切换）：
+  - `InMemoryKnowledgeStore`（默认，`memory`）：无外部依赖，确定性 2-gram 哈希向量化 + 余弦检索，本地演示/CI；
+  - `PgVectorKnowledgeStore`（`pgvector`）：PostgreSQL + pgvector 扩展，原生 JDBC（表 `vector_doc`：namespace/doc_id/content/metadata/embedding vector(256)），`<=>` 余弦距离检索 + TopK/阈值过滤；
+- **入库管线**：`DocumentChunker`（分块大小/重叠可配，默认 600/50）+ `Vectorizer` 接口（`DeterministicVectorizer` 默认，可替换 Embedding 模型实现）；
+- **RAG 注入**：`DefaultReActAgent` 运行前以用户输入检索知识库（TopK + 阈值），命中注入系统提示【知识库检索结果】；检索失败自动降级（跳过 RAG，不阻断推理）；
+- **接口**：`POST /api/agent/knowledge/upsert`（文档入库，自动切分）+ `POST /api/agent/knowledge/search`（检索，支持指定命名空间）；
+- **配置**：`cosy.agent.vector.{store, namespace, top-k, min-score, chunk-size, overlap, pg.*}`（环境变量 `COSY_AGENT_VECTOR_*` 可覆盖）；
+- **验证**：全量 56 项测试通过，其中 `PgVectorKnowledgeStoreIntegrationTest` 3 项在真实 PostgreSQL 14 + pgvector 0.8.6 上通过（`PGVECTOR_IT=true` 时执行，默认跳过）；真实运行验证入库/检索/命名空间隔离/RAG 注入（日志记录命中数）。
 
 ---
 
@@ -310,7 +321,7 @@ CREATE TABLE agent_trace (
 | **Step 1** | 基础框架 | Maven 工程、分层骨架、核心契约（Agent/Tool/Memory/Vector）、ToolRegistry、统一接口、配置体系、测试 | 工程可编译；`mvn test` 通过；服务可启动；接口可调用 | ✅ 已交付 |
 | **Step 2** | ReAct 编排 | DefaultReActAgent 实现（ChatModel 手动循环）、AgentToolBridging 工具桥接（FunctionTool）、迭代与终止逻辑 | Mock/真实 LLM 下可完成"规划→调用工具→多轮→回答"闭环；超迭代/异常正确终止 | ✅ 已交付 |
 | **Step 3** | Redis 多层记忆 | RedisMemoryStore 实现、滚动会话记录、记忆注入与持久化、自动降级 | 跨会话/多轮记忆命中；Redis 不可用时降级不崩溃；真实 Redis 集成测试通过（REDIS_IT=true） | ✅ 已交付 |
-| Step 4 | PGVector 知识检索 | 文档入库管线、RAG 检索注入 | 知识库问答命中率达标；命名空间隔离生效 | 待实施 |
+| **Step 4** | PGVector 知识检索 | 文档入库管线（切分/向量化/双存储）、RAG 检索注入、命名空间隔离、知识接口 | 知识库问答命中率达标；命名空间隔离生效；真实 PGVector 集成测试通过（PGVECTOR_IT=true） | ✅ 已交付 |
 | Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | 待实施 |
 | Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
 | **Step M** | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性；35 项测试通过 | ✅ 已交付 |
@@ -319,7 +330,7 @@ CREATE TABLE agent_trace (
 
 ---
 
-## 11. 交付说明（Step 1 ~ Step 3 + Step M）
+## 11. 交付说明（Step 1 ~ Step 3 + Step M + Step 4）
 
 ### 11.1 Step 1 已落地内容
 
@@ -349,19 +360,24 @@ CREATE TABLE agent_trace (
 ### 11.4 运行与验证
 
 ```bash
-mvn test                        # 全部测试通过（23 项）
-REDIS_IT=true mvn test          # 追加真实 Redis 集成测试（需本地 Redis）
-mvn spring-boot:run             # 启动（Redis 未启动时记忆自动降级）
+mvn test                        # 全部测试通过（56 项；PG/Redis 集成默认跳过）
+REDIS_IT=true PGVECTOR_IT=true mvn test   # 追加真实 Redis + 真实 PGVector 集成测试（需本地 Redis/PostgreSQL）
+mvn spring-boot:run             # 启动（Redis/PG 不可用时对应能力自动降级）
 
 curl http://localhost:8080/api/agent/status
 curl http://localhost:8080/api/agent/tools
+curl -X POST http://localhost:8080/api/agent/knowledge/upsert \
+  -H 'Content-Type: application/json' \
+  -d '{"namespace":"hr","docId":"kb-1","content":"重置企业账号密码的操作步骤：..."}'
+curl -X POST http://localhost:8080/api/agent/knowledge/search \
+  -H 'Content-Type: application/json' -d '{"namespace":"hr","query":"如何重置密码","topK":3}'
 curl -X POST http://localhost:8080/api/agent/chat \
-  -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"现在几点？"}'
+  -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"如何重置密码？"}'
 ```
 
 ### 11.5 仓库地址
 
-`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 + Step M 代码已推送 main 分支）
+`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 + Step M + Step 4 代码已推送 main 分支）
 
 ### 11.6 Step M 已落地内容
 
@@ -369,6 +385,14 @@ curl -X POST http://localhost:8080/api/agent/chat \
 - `MockScriptEngine`：按 Prompt 历史推导推进位置（无共享状态，支持并发）；5 个预置剧本覆盖单工具 / 多轮多工具 / 未知工具自愈 / 超迭代路径；最终回答引用真实工具观察结果；
 - 随机性：scripted 固定种子可复现（CI）；random 以用户消息哈希+运行时刻为锚，每次运行独立随机；行为注入（附加轮 / 未知工具 / 多工具并行 / 模型异常）概率可配；
 - 全链路验证：`MockE2eIntegrationTest`（无真实 Key 走通 HTTP→ReAct→工具执行→记忆持久化）+ `MockScriptEngineTest`（8 项）+ `MockChatModelDecoratorTest`（2 项），全量 35 项通过；真实运行验证随机性与多剧本切换正常。
+
+### 11.7 Step 4 已落地内容
+
+- `agent.vector`：`Vectorizer`（接口）+ `DeterministicVectorizer`（确定性 2-gram 哈希向量，无外部依赖）；`DocumentChunker`（分块/重叠可配）；`InMemoryKnowledgeStore`（默认）与 `PgVectorKnowledgeStore`（真实 PGVector，原生 JDBC，`cosy.agent.vector.store=pgvector` 条件装配）双存储；
+- RAG 注入：`DefaultReActAgent` 运行前以用户输入检索（TopK + 阈值），命中注入【知识库检索结果】到系统提示；检索失败降级跳过；命中日志可观测；
+- 知识接口：`POST /api/agent/knowledge/upsert`（入库切分）+ `/search`（检索，命名空间可指定）；
+- 测试：`DocumentChunkerTest`（4）+ `DeterministicVectorizerTest`（2）+ `InMemoryKnowledgeStoreTest`（5）+ `DefaultReActAgentTest` RAG 注入/降级（+2）+ `KnowledgeApiIntegrationTest`（2）+ `PgVectorKnowledgeStoreIntegrationTest`（3，`PGVECTOR_IT=true` 在真实 PostgreSQL 14 + pgvector 0.8.6 上通过），全量 56 项通过；
+- 真实运行验证（Mock 模式 28080）：入库（切分 1 块）→ 检索命中（score 0.34 > 阈值 0.15）→ 命名空间隔离（hr 与 it 互不可见）→ 对话触发 RAG（日志"知识库命中 1 条注入系统提示"）。
 
 ---
 

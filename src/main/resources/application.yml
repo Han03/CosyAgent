@@ -26,6 +26,20 @@ cosy:
     session-timeout: 30m     # 会话记忆 TTL（Step 3 生效）
     long-term-timeout: 180d  # 长期记忆 TTL（Step 3 生效）
     working-timeout: 10m     # 工作记忆 TTL（Step 3 生效）
+    vector:
+      # 知识检索（Step 4 生效）：store=memory 为内存实现（无外部依赖，默认）；
+      # store=pgvector 走 PostgreSQL + PGVector（生产形态，需安装 pgvector 扩展）
+      store: ${COSY_AGENT_VECTOR_STORE:memory}
+      namespace: ${COSY_AGENT_VECTOR_NAMESPACE:default}   # 默认命名空间（业务域/租户隔离）
+      top-k: ${COSY_AGENT_VECTOR_TOP_K:5}                 # 检索返回最大命中数
+      min-score: ${COSY_AGENT_VECTOR_MIN_SCORE:0.15}      # 最小相似度阈值
+      chunk-size: ${COSY_AGENT_VECTOR_CHUNK_SIZE:600}     # 文档切分块大小（字符）
+      overlap: ${COSY_AGENT_VECTOR_OVERLAP:50}            # 切分块重叠（字符）
+      pg:
+        # store=pgvector 时生效（原生 JDBC，不触发 DataSource 自动配置）
+        url: ${COSY_AGENT_VECTOR_PG_URL:jdbc:postgresql://localhost:5432/cosy}
+        username: ${COSY_AGENT_VECTOR_PG_USER:postgres}
+        password: ${COSY_AGENT_VECTOR_PG_PASSWORD:postgres}
     mock:
       # LLM 端到端 Mock 模块（Step M）：开启后以剧本引擎替代真实 LLM 推理，
       # 其余全链路（编排/工具执行/记忆读写）真实运行；关闭则走真实 LLM。
