@@ -313,6 +313,7 @@ CREATE TABLE agent_trace (
 | Step 4 | PGVector 知识检索 | 文档入库管线、RAG 检索注入 | 知识库问答命中率达标；命名空间隔离生效 | 待实施 |
 | Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | 待实施 |
 | Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
+| Step M | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性 | 设计稿（见附录 13） |
 
 每步独立可交付、可回滚；后续步骤不破坏 Step 1 契约（接口稳定是硬约束）。
 
@@ -375,3 +376,11 @@ curl -X POST http://localhost:8080/api/agent/chat \
 | 外部依赖抖动 | Resilience4j 全链路覆盖 + 降级路径明确 |
 
 **演进方向**：多 Agent 协作（Planner/Executor 拆分）、流式输出（SSE）、插件化工具市场、评估集（Agent Eval）自动化回归。
+
+---
+
+## 13. 附录：LLM 端到端 Mock 模块
+
+独立设计文档：[`LLM Mock 端到端模块设计方案.md`](LLM%20Mock%20端到端模块设计方案.md)（v0.1 设计稿）。
+
+核心要点：`MockChatModelDecorator`（ChatModel 装饰器，`cosy.agent.mock.enabled` 开关路由）+ 剧本引擎（预置 5 场景，覆盖单工具/多工具/自愈/超迭代路径）+ 双层随机性（剧本选择与行为概率注入），`scripted+seed` 可复现、`random` 真随机；仅替换 LLM 推理，工具执行、ReAct 编排、Redis 记忆全链路真实运行。
