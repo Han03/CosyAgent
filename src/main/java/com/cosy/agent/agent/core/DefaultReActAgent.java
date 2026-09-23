@@ -98,13 +98,26 @@ public class DefaultReActAgent implements ReActAgent {
 
     @Override
     public AgentResult run(AgentContext context, String userInput) {
+        return run(context, userInput, List.of());
+    }
+
+    @Override
+    public AgentResult run(AgentContext context, String userInput, List<AgentMessage> history) {
         long start = System.currentTimeMillis();
 
         List<Message> messages = new ArrayList<>();
         messages.add(new SystemMessage(buildSystemPrompt(context, userInput)));
-        messages.add(new UserMessage(userInput));
-
         List<AgentMessage> trace = new ArrayList<>();
+        if (history != null) {
+            for (AgentMessage historic : history) {
+                if (historic.role() == AgentMessage.Role.SYSTEM) {
+                    continue; // 系统提示由当前轮重新构建，历史系统消息不注入
+                }
+                messages.add(toSpringMessage(historic));
+                trace.add(historic);
+            }
+        }
+        messages.add(new UserMessage(userInput));
         trace.add(AgentMessage.user(userInput));
 
         AgentState state = AgentState.RUNNING;
@@ -170,8 +183,10 @@ public class DefaultReActAgent implements ReActAgent {
 
         persistMemory(context, userInput, answer, state);
 
+        Object taskIdAttr = context.attributes().get("taskId");
+        String taskId = taskIdAttr != null ? taskIdAttr.toString() : null;
         return new AgentResult(context.sessionId(), answer, state, List.copyOf(trace), iterations,
-                System.currentTimeMillis() - start, errorMessage);
+                System.currentTimeMillis() - start, errorMessage, taskId);
     }
 
     /**
@@ -261,6 +276,21 @@ public class DefaultReActAgent implements ReActAgent {
         } catch (JsonProcessingException e) {
             return Map.of();
         }
+    }
+
+    /** 历史轨迹消息 → Spring AI Message（Step 6 断点恢复：USER/ASSISTANT/TOOL 三类） */
+    private Message toSpringMessage(AgentMessage historic) {
+        return switch (historic.role()) {
+            case USER -> new UserMessage(historic.content());
+            case ASSISTANT -> new AssistantMessage(historic.content() == null ? "" : historic.content());
+            case TOOL -> ToolResponseMessage.builder()
+                    .responses(List.of(new ToolResponseMessage.ToolResponse(
+                            historic.toolCallId() == null ? "tool-" + historic.toolName() : historic.toolCallId(),
+                            historic.toolName(),
+                            historic.content() == null ? "" : historic.content())))
+                    .build();
+            case SYSTEM -> new SystemMessage(historic.content());
+        };
     }
 
     private String toJson(Object value) {

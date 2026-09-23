@@ -1,5 +1,7 @@
 package com.cosy.agent.agent.core;
 
+import java.util.List;
+
 /**
  * ReAct 智能体执行器契约（Step 2 实现）。
  *
@@ -12,5 +14,13 @@ public interface ReActAgent {
     String name();
 
     /** 执行一次任务：给定上下文与用户输入，返回答案与执行轨迹 */
-    AgentResult run(AgentContext context, String userInput);
+    default AgentResult run(AgentContext context, String userInput) {
+        return run(context, userInput, List.of());
+    }
+
+    /**
+     * 执行一次任务，可携带历史轨迹（Step 6 断点恢复）：
+     * 历史 USER/ASSISTANT/TOOL 消息作为模型上下文注入（系统提示之后、本次输入之前）。
+     */
+    AgentResult run(AgentContext context, String userInput, List<AgentMessage> history);
 }

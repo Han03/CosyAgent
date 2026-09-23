@@ -257,4 +257,38 @@ class DefaultReActAgentTest {
         assertThat(result.state()).isEqualTo(AgentState.FAILED);
         assertThat(result.errorMessage()).contains("熔断");
     }
+
+    @Test
+    void injectsHistoryIntoModelContextOnResume() {
+        // Step 6 断点恢复：历史 USER/ASSISTANT/TOOL 消息注入模型上下文（系统提示之后、本次输入之前）
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("恢复后继续回答。"));
+        List<AgentMessage> history = List.of(
+                AgentMessage.user("第一步问题"),
+                AgentMessage.assistant("我需要调用工具"),
+                AgentMessage.tool("call-1", "get_server_time", "{}", "{\"time\":\"2026-09-24 10:00:00\"}"));
+
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "继续", history);
+
+        assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
+        assertThat(result.trace()).hasSize(history.size() + 2); // 历史 3 条 + 本次输入 + 最终回答
+        assertThat(result.trace().get(0).content()).isEqualTo("第一步问题");
+        assertThat(result.trace().get(3).content()).isEqualTo("继续");
+        assertThat(result.trace().get(4).content()).isEqualTo("恢复后继续回答。");
+
+        ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(captor.capture());
+        List<org.springframework.ai.chat.messages.Message> messages = captor.getValue().getInstructions();
+        assertThat(messages).hasSize(5); // system + 历史 3 条（USER/ASSISTANT/TOOL）+ 本次 USER
+        assertThat(messages.get(1)).isInstanceOf(org.springframework.ai.chat.messages.UserMessage.class);
+        assertThat(messages.get(2)).isInstanceOf(AssistantMessage.class);
+        assertThat(messages.get(3)).isInstanceOf(org.springframework.ai.chat.messages.ToolResponseMessage.class);
+        assertThat(((org.springframework.ai.chat.messages.UserMessage) messages.get(4)).getText()).isEqualTo("继续");
+    }
+
+    @Test
+    void exposesTaskIdWhenContextCarriesIt() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("完成。"));
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-123"), "你好");
+        assertThat(result.taskId()).isEqualTo("task-123");
+    }
 }

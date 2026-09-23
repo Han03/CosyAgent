@@ -1,0 +1,63 @@
+# CosyAgent 一键部署（开发/预发）：应用 + Redis 记忆 + PostgreSQL(pgvector) 任务/知识库
+# 用法：docker compose up -d --build
+# 生产建议：K8s（deploy/k8s/）或云托管数据库替换内嵌容器。
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: cosy
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_PORT: 8080
+      # 真实 LLM（本地演示可开 COSY_AGENT_MOCK_ENABLED=true 免 Key 全链路跑通）
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-demo}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      COSY_AGENT_MOCK_ENABLED: ${COSY_AGENT_MOCK_ENABLED:-false}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # 生产形态：PGVector 知识检索 + PostgreSQL 任务持久化
+      COSY_AGENT_VECTOR_STORE: pgvector
+      COSY_AGENT_VECTOR_PG_URL: jdbc:postgresql://postgres:5432/cosy
+      COSY_AGENT_VECTOR_PG_USER: postgres
+      COSY_AGENT_VECTOR_PG_PASSWORD: postgres
+      COSY_AGENT_TASK_STORE: pg
+      COSY_AGENT_TASK_PG_URL: jdbc:postgresql://postgres:5432/cosy
+      COSY_AGENT_TASK_PG_USER: postgres
+      COSY_AGENT_TASK_PG_PASSWORD: postgres
+      # API 鉴权（生产必配：docker compose run 时通过 .env 注入）
+      COSY_AGENT_API_KEY: ${COSY_AGENT_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

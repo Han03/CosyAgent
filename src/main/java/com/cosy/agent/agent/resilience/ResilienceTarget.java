@@ -8,5 +8,6 @@ public enum ResilienceTarget {
     LLM,      // 模型推理：重试 3 次退避 / 熔断 / 限流 / 超时 60s / 并发隔离
     TOOL,     // 工具调用：幂等工具重试 / 熔断 / 限流 / 超时 30s / 并发隔离
     MEMORY,   // Redis 记忆读写：重试 / 熔断 / 超时 2s
-    VECTOR    // 知识库检索：重试 / 熔断 / 超时 5s
+    VECTOR,   // 知识库检索：重试 / 熔断 / 超时 5s
+    TASK      // 任务/轨迹持久化（Step 6）：PostgreSQL 写入，重试 / 熔断 / 超时 2s
 }

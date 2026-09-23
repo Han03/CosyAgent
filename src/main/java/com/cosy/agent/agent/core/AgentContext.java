@@ -15,4 +15,13 @@ public record AgentContext(
     public static AgentContext create(String sessionId, String userId, int maxIterations) {
         return new AgentContext(sessionId, userId, new ConcurrentHashMap<>(), maxIterations);
     }
+
+    /** 创建带任务 ID 的上下文（Step 6：编排层持久化任务时透传 taskId） */
+    public static AgentContext create(String sessionId, String userId, int maxIterations, String taskId) {
+        Map<String, Object> attributes = new ConcurrentHashMap<>();
+        if (taskId != null) {
+            attributes.put("taskId", taskId);
+        }
+        return new AgentContext(sessionId, userId, attributes, maxIterations);
+    }
 }

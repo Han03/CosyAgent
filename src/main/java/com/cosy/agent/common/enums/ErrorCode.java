@@ -14,7 +14,9 @@ public enum ErrorCode {
     LLM_CALL_FAILED(10004, "模型调用失败"),
     MEMORY_ACCESS_FAILED(10005, "记忆访问失败"),
     VECTOR_SEARCH_FAILED(10006, "向量检索失败"),
-    RATE_LIMITED(10007, "请求过于频繁，请稍后重试");
+    RATE_LIMITED(10007, "请求过于频繁，请稍后重试"),
+    UNAUTHORIZED(401, "未授权"),
+    TASK_NOT_FOUND(10008, "任务不存在");
 
     private final int code;
     private final String message;

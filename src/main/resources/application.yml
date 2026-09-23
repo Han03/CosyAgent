@@ -53,6 +53,19 @@ cosy:
         unknown-tool: 0.1    # 工具名替换为未注册名（未知工具自愈路径）
         multi-tool: 0.1      # 单轮多工具并行
         error: 0.05          # 模型异常（FAILED 终止路径）
+    task:
+      # 任务状态持久化（Step 6）：store=memory 为内存实现（默认，无外部依赖，重启即失）；
+      # store=pg 走 PostgreSQL（生产形态，表 agent_task/agent_trace 自建，需 PostgreSQL 运行）
+      store: ${COSY_AGENT_TASK_STORE:memory}
+      pg:
+        # store=pg 时生效（原生 JDBC，不触发 DataSource 自动配置）
+        url: ${COSY_AGENT_TASK_PG_URL:jdbc:postgresql://localhost:5432/cosy}
+        username: ${COSY_AGENT_TASK_PG_USER:postgres}
+        password: ${COSY_AGENT_TASK_PG_PASSWORD:postgres}
+    security:
+      # API 鉴权（Step 6 生产化）：配置后 /api/** 需携带 X-API-Key 请求头；
+      # 留空（默认）不启用，便于本地开发与测试。
+      api-key: ${COSY_AGENT_API_KEY:}
 
 server:
   port: ${SERVER_PORT:8080}
@@ -74,6 +87,9 @@ resilience4j:
       vector-retry:   # 知识库检索：2 次快速重试
         max-attempts: 2
         wait-duration: 500ms
+      task-retry:     # 任务/轨迹持久化：2 次快速重试（Step 6）
+        max-attempts: 2
+        wait-duration: 500ms
   circuitbreaker:
     instances:
       llm-cb:         # LLM 熔断：20 次滑动窗口、失败率 50%、打开 30s
@@ -90,6 +106,10 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 30s
       vector-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+      task-cb:
         sliding-window-size: 20
         failure-rate-threshold: 50
         wait-duration-in-open-state: 30s
@@ -113,6 +133,8 @@ resilience4j:
         timeout-duration: 2s
       vector-timelimiter: # 知识检索超时 5s
         timeout-duration: 5s
+      task-timelimiter:   # 任务/轨迹持久化超时 2s（Step 6）
+        timeout-duration: 2s
   bulkhead:
     instances:
       llm-bulkhead:   # LLM 并发舱壁：最多 8 并发

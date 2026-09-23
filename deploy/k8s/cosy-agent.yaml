@@ -1,0 +1,115 @@
+# CosyAgent K8s 部署示例（deploy/k8s/）：Deployment + Service + ConfigMap + Secret
+# 用法：kubectl apply -f deploy/k8s/ （需先配置 Secret 中的 API Key 与 LLM Key）
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cosy-agent-secret
+type: Opaque
+stringData:
+  openai-api-key: "sk-xxx"            # 真实 LLM Key；本地演示可用 Mock 模式
+  api-key: "change-me"                # 接口鉴权 X-API-Key（留空则不启用）
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cosy-agent-config
+data:
+  OPENAI_BASE_URL: "https://api.openai.com"
+  OPENAI_CHAT_MODEL: "gpt-4o-mini"
+  REDIS_HOST: "cosy-agent-redis"      # 使用云 Redis 或同命名空间 Headless Service
+  REDIS_PORT: "6379"
+  COSY_AGENT_VECTOR_STORE: "pgvector"
+  COSY_AGENT_VECTOR_PG_URL: "jdbc:postgresql://cosy-agent-postgres:5432/cosy"
+  COSY_AGENT_VECTOR_PG_USER: "postgres"
+  COSY_AGENT_VECTOR_PG_PASSWORD: "postgres"
+  COSY_AGENT_TASK_STORE: "pg"
+  COSY_AGENT_TASK_PG_URL: "jdbc:postgresql://cosy-agent-postgres:5432/cosy"
+  COSY_AGENT_TASK_PG_USER: "postgres"
+  COSY_AGENT_TASK_PG_PASSWORD: "postgres"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cosy-agent
+  labels: { app: cosy-agent }
+spec:
+  replicas: 2                        # 灰度可先 1 副本
+  selector:
+    matchLabels: { app: cosy-agent }
+  template:
+    metadata:
+      labels: { app: cosy-agent }
+    spec:
+      containers:
+        - name: cosy-agent
+          image: cosy-agent:0.1.0    # 推送至私有仓库后替换为 registry 地址
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: { name: cosy-agent-secret, key: openai-api-key }
+            - name: COSY_AGENT_API_KEY
+              valueFrom:
+                secretKeyRef: { name: cosy-agent-secret, key: api-key }
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: OPENAI_BASE_URL }
+            - name: OPENAI_CHAT_MODEL
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: OPENAI_CHAT_MODEL }
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: REDIS_HOST }
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: REDIS_PORT }
+            - name: COSY_AGENT_VECTOR_STORE
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_VECTOR_STORE }
+            - name: COSY_AGENT_VECTOR_PG_URL
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_VECTOR_PG_URL }
+            - name: COSY_AGENT_VECTOR_PG_USER
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_VECTOR_PG_USER }
+            - name: COSY_AGENT_VECTOR_PG_PASSWORD
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_VECTOR_PG_PASSWORD }
+            - name: COSY_AGENT_TASK_STORE
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_TASK_STORE }
+            - name: COSY_AGENT_TASK_PG_URL
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_TASK_PG_URL }
+            - name: COSY_AGENT_TASK_PG_USER
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_TASK_PG_USER }
+            - name: COSY_AGENT_TASK_PG_PASSWORD
+              valueFrom:
+                configMapKeyRef: { name: cosy-agent-config, key: COSY_AGENT_TASK_PG_PASSWORD }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cosy-agent
+  labels: { app: cosy-agent }
+spec:
+  selector: { app: cosy-agent }
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP
