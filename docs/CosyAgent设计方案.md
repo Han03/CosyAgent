@@ -244,23 +244,58 @@ cosy:lock:{taskId}                  # 任务并发锁（用于幂等/防重入�
 - **知识检索降级**：跳过 RAG 直接回答，并在结果中标注"未使用知识库"；
 - **工具失败**：错误作为 Observation 回传模型，由模型决定更换工具或终止（ReAct 天然容错）。
 
-### 7.3 配置形态（Step 5 启用，示例）
+### 7.3 配置形态（Step 5 已启用）
 
 ```yaml
 resilience4j:
   retry:
     instances:
-      llm-retry:
+      llm-retry:        # LLM：3 次 × 2s 退避
         max-attempts: 3
         wait-duration: 2s
-        retry-exceptions: [org.springframework.ai.retry.NonTransientAiException]
+      tool-retry:       # 幂等工具：2 次 × 1s
+        max-attempts: 2
+        wait-duration: 1s
+      memory-retry:     # 记忆读写：2 次 × 500ms
+        max-attempts: 2
+        wait-duration: 500ms
+      vector-retry:     # 知识检索：2 次 × 500ms
+        max-attempts: 2
+        wait-duration: 500ms
   circuitbreaker:
     instances:
-      llm-cb:
+      llm-cb:           # 20 窗口 / 50% 失败率 / 打开 30s / 半开 5
         sliding-window-size: 20
         failure-rate-threshold: 50
         wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+      # tool-cb / memory-cb / vector-cb 同参数
+  ratelimiter:
+    instances:
+      llm-ratelimit:    # 60 次/分，超限不等待直接拒绝
+        limit-for-period: 60
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+      tool-ratelimit:   # 120 次/分
+  timelimiter:
+    instances:
+      llm-timelimiter: 60s / tool-timelimiter: 30s / memory-timelimiter: 2s / vector-timelimiter: 5s
+  bulkhead:
+    instances:
+      llm-bulkhead:     # 8 并发
+        max-concurrent-calls: 8
+        max-wait-duration: 0
+      tool-bulkhead: 8 并发
 ```
+
+### 7.4 实现状态（Step 5 已落地）
+
+- `agent.resilience`：`ResilienceTarget`（LLM / TOOL / MEMORY / VECTOR 四类调用点）+ `ResilienceSupport`（@Component，注入五个 Registry）。
+- 组合链：**Retry → CircuitBreaker → RateLimiter → Bulkhead → TimeLimiter**（外层→内层；执行序是 TimeLimiter 最先包住真实调用，Retry 最外层整体兜底）；实例按 `<target>-retry / -cb / -ratelimit / -bulkhead / -timelimiter` 命名约定查找，**未配置的组件自动跳过**（声明式，无容错时行为与 Step 4 前一致）。
+- **关键实现决策（踩坑实证）**：resilience4j 2.x 中 `Registry.instance(name)` 单参重载**一律返回默认配置实例**（`of(Map)` 注册的按名配置不会被采用），且 `getConfiguration(name)` 为空时也会创建默认实例；因此解析统一走 `getConfiguration(name)` 门控 + `instance(name, config)` 双参重载，未注册返回 null 跳过。
+- 接线点：`DefaultReActAgent`（LLM 调用 / 工具执行，工具按 `AgentTool.retryable()` 决定是否可重试）、`RedisMemoryStore`（MEMORY）、`InMemoryKnowledgeStore` / `PgVectorKnowledgeStore`（VECTOR）；熔断打开（`CallNotPermittedException`）→ 降级文案"模型服务暂时不可用（熔断中）"。
+- 指标：`management.health.circuitbreakers.enabled: true`（熔断打开 → 对应健康检查 DOWN，可联动告警）；resilience4j 事件日志 DEBUG。
+- 测试：`ResilienceSupportTest` 5 项（重试自愈 / 熔断快速失败 / 限流拒绝 / 慢调用超时 / 舱壁隔离）+ `DefaultReActAgentTest` 新增 2 项（瞬时失败重试自愈、熔断后友好文案）+ `TestResilience` 测试助手，全量 60 项通过。
 
 ---
 
@@ -322,7 +357,7 @@ CREATE TABLE agent_trace (
 | **Step 2** | ReAct 编排 | DefaultReActAgent 实现（ChatModel 手动循环）、AgentToolBridging 工具桥接（FunctionTool）、迭代与终止逻辑 | Mock/真实 LLM 下可完成"规划→调用工具→多轮→回答"闭环；超迭代/异常正确终止 | ✅ 已交付 |
 | **Step 3** | Redis 多层记忆 | RedisMemoryStore 实现、滚动会话记录、记忆注入与持久化、自动降级 | 跨会话/多轮记忆命中；Redis 不可用时降级不崩溃；真实 Redis 集成测试通过（REDIS_IT=true） | ✅ 已交付 |
 | **Step 4** | PGVector 知识检索 | 文档入库管线（切分/向量化/双存储）、RAG 检索注入、命名空间隔离、知识接口 | 知识库问答命中率达标；命名空间隔离生效；真实 PGVector 集成测试通过（PGVECTOR_IT=true） | ✅ 已交付 |
-| Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | 待实施 |
+| Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | ✅ 已交付 |
 | Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
 | **Step M** | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性；35 项测试通过 | ✅ 已交付 |
 
@@ -330,7 +365,7 @@ CREATE TABLE agent_trace (
 
 ---
 
-## 11. 交付说明（Step 1 ~ Step 3 + Step M + Step 4）
+## 11. 交付说明（Step 1 ~ Step 3 + Step M + Step 4 + Step 5）
 
 ### 11.1 Step 1 已落地内容
 
@@ -360,8 +395,8 @@ CREATE TABLE agent_trace (
 ### 11.4 运行与验证
 
 ```bash
-mvn test                        # 全部测试通过（56 项；PG/Redis 集成默认跳过）
-REDIS_IT=true PGVECTOR_IT=true mvn test   # 追加真实 Redis + 真实 PGVector 集成测试（需本地 Redis/PostgreSQL）
+mvn test                        # 全部单测通过（54 项；PG/Redis 集成默认跳过）
+REDIS_IT=true PGVECTOR_IT=true mvn test   # 全量 60 项：追加真实 Redis（3）+ 真实 PGVector（3）集成测试（需本地 Redis/PostgreSQL）
 mvn spring-boot:run             # 启动（Redis/PG 不可用时对应能力自动降级）
 
 curl http://localhost:8080/api/agent/status
@@ -377,7 +412,7 @@ curl -X POST http://localhost:8080/api/agent/chat \
 
 ### 11.5 仓库地址
 
-`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 + Step M + Step 4 代码已推送 main 分支）
+`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 + Step M + Step 4 + Step 5 代码已推送 main 分支，commit 链 `7ceef15 → 462b7ed → 52c6ce5 → ae49599 → 96e1e48 → 9371bdb`）
 
 ### 11.6 Step M 已落地内容
 
@@ -393,6 +428,14 @@ curl -X POST http://localhost:8080/api/agent/chat \
 - 知识接口：`POST /api/agent/knowledge/upsert`（入库切分）+ `/search`（检索，命名空间可指定）；
 - 测试：`DocumentChunkerTest`（4）+ `DeterministicVectorizerTest`（2）+ `InMemoryKnowledgeStoreTest`（5）+ `DefaultReActAgentTest` RAG 注入/降级（+2）+ `KnowledgeApiIntegrationTest`（2）+ `PgVectorKnowledgeStoreIntegrationTest`（3，`PGVECTOR_IT=true` 在真实 PostgreSQL 14 + pgvector 0.8.6 上通过），全量 56 项通过；
 - 真实运行验证（Mock 模式 28080）：入库（切分 1 块）→ 检索命中（score 0.34 > 阈值 0.15）→ 命名空间隔离（hr 与 it 互不可见）→ 对话触发 RAG（日志"知识库命中 1 条注入系统提示"）。
+
+### 11.8 Step 5 已落地内容
+
+- `agent.resilience`：`ResilienceTarget`（LLM/TOOL/MEMORY/VECTOR）+ `ResilienceSupport`（组合链 Retry→CB→RateLimiter→Bulkhead→TimeLimiter，按 `<target>-<组件>` 命名约定查找，未配置组件自动跳过）；
+- 接线：`DefaultReActAgent`（LLM 调用 / 工具执行，`AgentTool.retryable()` 决定工具是否可重试）、`RedisMemoryStore`（MEMORY）、`InMemoryKnowledgeStore`/`PgVectorKnowledgeStore`（VECTOR）；`CallNotPermittedException` 降级为"模型服务暂时不可用（熔断中）"；
+- 配置：`application.yml` resilience4j 五类策略全量声明（llm 3×2s / tool 2×1s / memory 2×500ms / vector 2×500ms 重试；20 窗口 50% 熔断；llm 60/min、tool 120/min 限流；60s/30s/2s/5s 超时；8 并发舱壁）+ 健康检查 circuitbreakers 指标；
+- **关键实现决策**：resilience4j 2.x `instance(name)` 单参重载返回默认配置（按名配置不生效），统一改 `getConfiguration(name)` 门控 + 双参重载（详见 7.4）；
+- 测试：`ResilienceSupportTest`（5）+ `DefaultReActAgentTest` 容错用例（+2）+ `TestResilience` 助手，全量 60 项通过（含真实 Redis 3 + PGVector 3）；Mock 模式真实运行验证：启动健康 UP、对话走通"规划→工具→回答"闭环。
 
 ---
 

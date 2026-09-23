@@ -15,19 +15,19 @@
 | PostgreSQL + PGVector | 任意 | 知识库向量检索 |
 | Resilience4j | 2.4.0 | Retry / CircuitBreaker / RateLimiter / TimeLimiter / Bulkhead |
 
-## 模块结构（Step 1 ~ Step 3 + Step M + Step 4 已落地）
+## 模块结构（Step 1 ~ Step 3 + Step M + Step 4 + Step 5 已落地）
 
 ```
 src/main/java/com/cosy/agent
 ├── common/          # 统一响应、错误码、全局异常
 ├── config/          # AgentProperties（含 Mock 嵌套配置）、VectorProperties、MockChatConfig
 ├── agent/
-│   ├── core/        # AgentState / AgentMessage / AgentContext / ReActAgent + DefaultReActAgent（Step 2/3/4 记忆+RAG 集成）
-│   ├── tool/        # AgentTool 契约 + ToolRegistry + AgentToolBridging（Step 2 桥接 FunctionTool）
-│   ├── memory/      # MemoryLevel / MemoryStore 契约 + RedisMemoryStore（Step 3 已实现）
+│   ├── core/        # AgentState / AgentMessage / AgentContext / ReActAgent + DefaultReActAgent（Step 2/3/4/5 记忆+RAG+容错集成）
+│   ├── tool/        # AgentTool 契约（retryable）+ ToolRegistry + AgentToolBridging（Step 2 桥接 FunctionTool）
+│   ├── memory/      # MemoryLevel / MemoryStore 契约 + RedisMemoryStore（Step 3 已实现，MEMORY 容错接线）
 │   ├── mock/        # MockChatModelDecorator + MockScriptEngine + 剧本库（Step M 已实现）
-│   ├── vector/      # 切分/向量化 + InMemory/PGVector 双存储 + RAG 注入（Step 4 已实现）
-│   └── resilience/  # 容错设计说明（Step 5 启用）
+│   ├── vector/      # 切分/向量化 + InMemory/PGVector 双存储 + RAG 注入（Step 4 已实现，VECTOR 容错接线）
+│   └── resilience/  # ResilienceTarget + ResilienceSupport 组合链（Step 5 已实现：重试/熔断/限流/超时/舱壁）
 ├── service/         # AgentOrchestrator 编排入口
 └── controller/      # /api/agent/** HTTP 接口（含知识库 upsert/search）
 ```
@@ -76,13 +76,12 @@ curl -X POST http://localhost:8080/api/agent/chat \
 | Step 3 | Redis 多层记忆：RedisMemoryStore、TTL 分层、滚动会话记录、记忆注入与持久化、自动降级 | ✅ 已交付 |
 | Step M | LLM 端到端 Mock 模块：ChatModel 装饰器 + 剧本引擎 + 随机性注入，开关开启时全链路可跑通 | ✅ 已交付 |
 | Step 4 | PGVector 知识检索：文档切分、向量化、InMemory/PGVector 双存储、RAG 检索注入、命名空间隔离 | ✅ 已交付 |
-| Step 5 | Resilience4j 容错：重试/熔断/限流/超时/舱壁与降级 | 待实施 |
+| Step 5 | Resilience4j 容错：重试/熔断/限流/超时/舱壁与降级（ResilienceSupport 组合链 + yaml 声明式策略） | ✅ 已交付 |
 | Step 6 | 状态持久化与生产化：任务状态机、轨迹存储、安全与可观测性 | 待实施 |
 
 ## 测试
 
 ```bash
-mvn test               # 56 项：上下文加载 + 工具 + ReAct + 记忆 + Mock + 知识检索（切分/向量化/内存存储/接口/RAG 注入）
-REDIS_IT=true mvn test # 追加 3 项真实 Redis 集成测试与 Mock 全链路记忆持久化断言（需本地 Redis）
-PGVECTOR_IT=true mvn test # 追加 3 项真实 PGVector 集成测试（需本地 PostgreSQL + pgvector 扩展）
+mvn test               # 54 项：上下文加载 + 工具 + ReAct + 记忆 + Mock + 容错 + 知识检索（切分/向量化/内存存储/接口/RAG 注入）
+REDIS_IT=true PGVECTOR_IT=true mvn test # 全量 60 项：追加真实 Redis（3）+ 真实 PGVector（3）集成测试（需本地 Redis/PostgreSQL+pgvector）
 ```
