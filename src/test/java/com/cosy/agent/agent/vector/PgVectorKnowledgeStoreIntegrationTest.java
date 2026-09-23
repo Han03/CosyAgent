@@ -1,5 +1,6 @@
 package com.cosy.agent.agent.vector;
 
+import com.cosy.agent.TestResilience;
 import com.cosy.agent.config.VectorProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,7 @@ class PgVectorKnowledgeStoreIntegrationTest {
         String url = System.getenv().getOrDefault("PGVECTOR_IT_URL", "jdbc:postgresql://localhost:5432/cosy");
         VectorProperties properties = new VectorProperties("pgvector", "default", 5, 0.15, 600, 50,
                 new VectorProperties.Pg(url, "postgres", "postgres"));
-        store = new PgVectorKnowledgeStore(properties);
+        store = new PgVectorKnowledgeStore(properties, TestResilience.defaultResilience());
     }
 
     @Test

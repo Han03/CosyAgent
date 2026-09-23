@@ -57,6 +57,75 @@ cosy:
 server:
   port: ${SERVER_PORT:8080}
 
+resilience4j:
+  # Step 5 容错策略（设计方案 §7 策略落点矩阵）：按 <target>-<组件> 命名，
+  # ResilienceSupport 按命名约定自动查找；实例未配置时对应组件自动跳过。
+  retry:
+    instances:
+      llm-retry:      # LLM 推理：3 次退避重试
+        max-attempts: ${COSY_RESILIENCE_LLM_RETRY_ATTEMPTS:3}
+        wait-duration: 2s
+      tool-retry:     # 幂等工具：2 次重试（AgentTool.retryable=true 才启用）
+        max-attempts: ${COSY_RESILIENCE_TOOL_RETRY_ATTEMPTS:2}
+        wait-duration: 1s
+      memory-retry:   # Redis 记忆读写：2 次快速重试
+        max-attempts: 2
+        wait-duration: 500ms
+      vector-retry:   # 知识库检索：2 次快速重试
+        max-attempts: 2
+        wait-duration: 500ms
+  circuitbreaker:
+    instances:
+      llm-cb:         # LLM 熔断：20 次滑动窗口、失败率 50%、打开 30s
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+      tool-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+      memory-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+      vector-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+  ratelimiter:
+    instances:
+      llm-ratelimit:  # LLM 限流：每分钟 60 次，超限不等待直接拒绝
+        limit-for-period: 60
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+      tool-ratelimit: # 工具限流：每分钟 120 次
+        limit-for-period: 120
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+  timelimiter:
+    instances:
+      llm-timelimiter:   # LLM 单次调用超时 60s
+        timeout-duration: 60s
+      tool-timelimiter:  # 工具单次调用超时 30s
+        timeout-duration: 30s
+      memory-timelimiter: # 记忆读写超时 2s
+        timeout-duration: 2s
+      vector-timelimiter: # 知识检索超时 5s
+        timeout-duration: 5s
+  bulkhead:
+    instances:
+      llm-bulkhead:   # LLM 并发舱壁：最多 8 并发
+        max-concurrent-calls: 8
+        max-wait-duration: 0
+      tool-bulkhead:
+        max-concurrent-calls: 8
+        max-wait-duration: 0
+
+logging:
+  level:
+    io.github.resilience4j: DEBUG   # 观察重试/熔断/限流事件（生产建议 INFO）
+
 management:
   endpoints:
     web:
@@ -65,4 +134,7 @@ management:
   health:
     # Step 3 起 Redis 为记忆存储依赖，纳入健康检查（未启动时显示 DOWN，记忆自动降级）
     redis:
+      enabled: true
+    # Step 5 起 Resilience4j 容错组件纳入健康检查（熔断打开时对应 DOWN，可联动告警）
+    circuitbreakers:
       enabled: true

@@ -21,6 +21,11 @@ public class ServerInfoTool implements AgentTool {
     }
 
     @Override
+    public boolean retryable() {
+        return true; // 只读查询，幂等可重试
+    }
+
+    @Override
     public Object execute(Map<String, Object> args) {
         return Map.of(
                 "application", "cosy-agent",

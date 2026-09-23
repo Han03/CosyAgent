@@ -24,6 +24,11 @@ public class ServerTimeTool implements AgentTool {
     }
 
     @Override
+    public boolean retryable() {
+        return true; // 只读查询，幂等可重试
+    }
+
+    @Override
     public Object execute(Map<String, Object> args) {
         return Map.of(
                 "time", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),

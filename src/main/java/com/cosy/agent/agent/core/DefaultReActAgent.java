@@ -3,6 +3,8 @@ package com.cosy.agent.agent.core;
 import com.cosy.agent.agent.memory.MemoryLevel;
 import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
+import com.cosy.agent.agent.resilience.ResilienceSupport;
+import com.cosy.agent.agent.resilience.ResilienceTarget;
 import com.cosy.agent.agent.tool.AgentTool;
 import com.cosy.agent.agent.tool.ToolRegistry;
 import com.cosy.agent.agent.vector.VectorKnowledgeStore;
@@ -11,6 +13,7 @@ import com.cosy.agent.config.VectorProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -42,6 +45,9 @@ import java.util.Optional;
  *
  * <p>Step 4 RAG 集成：运行前以用户输入检索知识库（TopK + 阈值），命中注入系统提示；
  * 检索失败自动降级（跳过 RAG，不阻断推理）。</p>
+ *
+ * <p>Step 5 容错集成：LLM 推理与工具调用统一施加 Resilience4j 组合策略
+ * （重试/熔断/限流/超时/舱壁）；熔断开启时返回友好降级文案，不雪崩。</p>
  */
 @Service
 public class DefaultReActAgent implements ReActAgent {
@@ -66,18 +72,21 @@ public class DefaultReActAgent implements ReActAgent {
     private final ToolRegistry toolRegistry;
     private final MemoryStore memoryStore;
     private final VectorKnowledgeStore vectorStore;
+    private final ResilienceSupport resilience;
     private final AgentProperties properties;
     private final VectorProperties vectorProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public DefaultReActAgent(ChatModel chatModel, OpenAiChatOptions chatOptions,
                              ToolRegistry toolRegistry, MemoryStore memoryStore,
-                             VectorKnowledgeStore vectorStore, AgentProperties properties, VectorProperties vectorProperties) {
+                             VectorKnowledgeStore vectorStore, ResilienceSupport resilience,
+                             AgentProperties properties, VectorProperties vectorProperties) {
         this.chatModel = chatModel;
         this.chatOptions = chatOptions;
         this.toolRegistry = toolRegistry;
         this.memoryStore = memoryStore;
         this.vectorStore = vectorStore;
+        this.resilience = resilience;
         this.properties = properties;
         this.vectorProperties = vectorProperties;
     }
@@ -107,11 +116,14 @@ public class DefaultReActAgent implements ReActAgent {
             iterations++;
             ChatResponse response;
             try {
-                response = chatModel.call(new Prompt(messages, chatOptions));
+                response = resilience.execute(ResilienceTarget.LLM,
+                        () -> chatModel.call(new Prompt(messages, chatOptions)));
             } catch (Exception e) {
                 log.error("LLM 调用失败，sessionId={}, iteration={}", context.sessionId(), iterations, e);
                 state = AgentState.FAILED;
-                errorMessage = "模型调用失败: " + rootMessage(e);
+                errorMessage = hasCause(e, CallNotPermittedException.class)
+                        ? "模型服务暂时不可用（熔断中），请稍后重试"
+                        : "模型调用失败: " + rootMessage(e);
                 break;
             }
 
@@ -135,7 +147,9 @@ public class DefaultReActAgent implements ReActAgent {
                     result = Map.of("error", "未知工具: " + toolCall.name());
                 } else {
                     try {
-                        result = tool.execute(parseArgs(toolCall.arguments()));
+                        Map<String, Object> args = parseArgs(toolCall.arguments());
+                        result = resilience.execute(ResilienceTarget.TOOL,
+                                () -> tool.execute(args), tool.retryable());
                     } catch (Exception e) {
                         log.warn("工具执行失败: name={}", toolCall.name(), e);
                         result = Map.of("error", "工具执行失败: " + rootMessage(e));
@@ -264,5 +278,16 @@ public class DefaultReActAgent implements ReActAgent {
         }
         String msg = current.getMessage();
         return msg == null || msg.isBlank() ? current.getClass().getSimpleName() : msg;
+    }
+
+    private boolean hasCause(Throwable e, Class<? extends Throwable> type) {
+        Throwable current = e;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return true;
+            }
+            current = current.getCause() == current ? null : current.getCause();
+        }
+        return false;
     }
 }

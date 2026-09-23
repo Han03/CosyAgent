@@ -1,13 +1,20 @@
 package com.cosy.agent.agent.core;
 
+import com.cosy.agent.TestResilience;
 import com.cosy.agent.agent.memory.MemoryLevel;
 import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
+import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.tool.ServerTimeTool;
 import com.cosy.agent.agent.tool.ToolRegistry;
 import com.cosy.agent.agent.vector.VectorKnowledgeStore;
 import com.cosy.agent.config.AgentProperties;
 import com.cosy.agent.config.VectorProperties;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -21,7 +28,9 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,7 +44,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * ReAct 循环单元测试：以脚本化 ChatModel 桩驱动，验证
- * 工具调用 → Observation 回传 → 最终回答 / 终止条件，以及 Step 3 记忆注入与持久化、Step 4 RAG 注入。
+ * 工具调用 → Observation 回传 → 最终回答 / 终止条件，以及 Step 3 记忆注入与持久化、
+ * Step 4 RAG 注入、Step 5 容错（重试自愈 / 熔断降级）。
  */
 class DefaultReActAgentTest {
 
@@ -54,10 +64,19 @@ class DefaultReActAgentTest {
         VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
         ToolRegistry registry = new ToolRegistry(List.of(new ServerTimeTool()));
         agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), registry, memoryStore,
-                vectorStore, properties, vectorProperties);
+                vectorStore, TestResilience.defaultResilience(), properties, vectorProperties);
         when(memoryStore.list(any(), any())).thenReturn(List.of());
         when(memoryStore.load(any(), any(), any())).thenReturn(Optional.empty());
         when(vectorStore.search(any(), any(), anyInt(), anyDouble())).thenReturn(List.of());
+    }
+
+    private DefaultReActAgent agentWith(ResilienceSupport resilience) {
+        AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
+                Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
+        VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
+        return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(),
+                new ToolRegistry(List.of(new ServerTimeTool())), memoryStore, vectorStore,
+                resilience, properties, vectorProperties);
     }
 
     private AssistantMessage toolCallMessage(String content, String name, String arguments) {
@@ -190,5 +209,52 @@ class DefaultReActAgentTest {
 
         assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
         assertThat(result.answer()).isEqualTo("直答。");
+    }
+
+    @Test
+    void recoversFromTransientLlmFailuresViaRetry() {
+        RetryRegistry retries = RetryRegistry.of(Map.of("llm-retry",
+                RetryConfig.custom().maxAttempts(3).waitDuration(Duration.ZERO).build()));
+        agent = agentWith(new ResilienceSupport(retries, CircuitBreakerRegistry.ofDefaults(),
+                io.github.resilience4j.ratelimiter.RateLimiterRegistry.ofDefaults(),
+                io.github.resilience4j.timelimiter.TimeLimiterRegistry.ofDefaults(),
+                io.github.resilience4j.bulkhead.BulkheadRegistry.ofDefaults()));
+
+        AtomicInteger calls = new AtomicInteger();
+        when(chatModel.call(any(Prompt.class))).thenAnswer(invocation -> {
+            if (calls.incrementAndGet() < 3) {
+                throw new RuntimeException("transient network error");
+            }
+            return response("重试后成功回答。");
+        });
+
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
+
+        assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
+        assertThat(result.answer()).isEqualTo("重试后成功回答。");
+        assertThat(calls.get()).isEqualTo(3); // 1 次原始 + 2 次重试
+    }
+
+    @Test
+    void failsFastWithFriendlyMessageWhenCircuitBreakerOpen() {
+        CircuitBreakerRegistry breakers = CircuitBreakerRegistry.of(Map.of("llm-cb",
+                CircuitBreakerConfig.custom().slidingWindowSize(2).minimumNumberOfCalls(2).failureRateThreshold(50)
+                        .waitDurationInOpenState(Duration.ofSeconds(30)).build()));
+        agent = agentWith(new ResilienceSupport(RetryRegistry.ofDefaults(), breakers,
+                io.github.resilience4j.ratelimiter.RateLimiterRegistry.ofDefaults(),
+                io.github.resilience4j.timelimiter.TimeLimiterRegistry.ofDefaults(),
+                io.github.resilience4j.bulkhead.BulkheadRegistry.ofDefaults()));
+
+        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("llm down"));
+
+        // 连续失败触发熔断（重试耗尽仍失败 → 计入熔断窗口）
+        for (int i = 0; i < 2; i++) {
+            AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
+            assertThat(result.state()).isEqualTo(AgentState.FAILED);
+        }
+
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
+        assertThat(result.state()).isEqualTo(AgentState.FAILED);
+        assertThat(result.errorMessage()).contains("熔断");
     }
 }

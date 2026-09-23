@@ -1,5 +1,6 @@
 package com.cosy.agent.agent.vector;
 
+import com.cosy.agent.TestResilience;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +15,7 @@ class InMemoryKnowledgeStoreTest {
 
     @BeforeEach
     void setUp() {
-        store = new InMemoryKnowledgeStore(new DeterministicVectorizer());
+        store = new InMemoryKnowledgeStore(new DeterministicVectorizer(), TestResilience.defaultResilience());
         store.upsert("hr", "doc-1", "重置密码的操作步骤说明：进入设置页点击重置并验证身份。", Map.of());
         store.upsert("hr", "doc-2", "请假流程：提前一天提交申请，主管审批后生效。", Map.of());
         store.upsert("it", "doc-3", "服务器部署手册：配置防火墙与反向代理。", Map.of());

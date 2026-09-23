@@ -23,4 +23,9 @@ public interface AgentTool {
     default Map<String, String> parameters() {
         return Map.of();
     }
+
+    /** 是否幂等可重试（Step 5）：只读/幂等工具返回 true，重试安全；默认 false（不重试） */
+    default boolean retryable() {
+        return false;
+    }
 }

@@ -1,5 +1,6 @@
 package com.cosy.agent.agent.memory;
 
+import com.cosy.agent.TestResilience;
 import com.cosy.agent.config.AgentProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class RedisMemoryStoreTest {
         when(redis.opsForValue()).thenReturn(valueOps);
         properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
                 Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
-        store = new RedisMemoryStore(redis, properties);
+        store = new RedisMemoryStore(redis, properties, TestResilience.defaultResilience());
     }
 
     @Test
