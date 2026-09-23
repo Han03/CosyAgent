@@ -5,17 +5,20 @@ import java.util.Optional;
 
 /**
  * 记忆存储契约：按层级读写会话 / 用户记忆。
+ *
+ * <p>命名空间约定：会话级记忆（WORKING / SESSION）传 sessionId；
+ * 长期记忆（LONG_TERM）传 userId，实现跨会话画像复用。</p>
  */
 public interface MemoryStore {
 
     void save(MemoryRecord record);
 
-    Optional<String> load(MemoryLevel level, String sessionId, String key);
+    Optional<String> load(MemoryLevel level, String namespace, String key);
 
-    void delete(MemoryLevel level, String sessionId, String key);
+    void delete(MemoryLevel level, String namespace, String key);
 
-    List<MemoryRecord> list(MemoryLevel level, String sessionId);
+    List<MemoryRecord> list(MemoryLevel level, String namespace);
 
-    /** 按内容语义检索（Step 3 起基于关键词 / 向量化实现） */
-    List<MemoryRecord> search(MemoryLevel level, String sessionId, String query, int topK);
+    /** 按内容检索（Step 3 关键词过滤，Step 4 升级为向量化语义检索） */
+    List<MemoryRecord> search(MemoryLevel level, String namespace, String query, int topK);
 }

@@ -1,6 +1,6 @@
 # CosyAgent 企业级 AI 智能体系统设计方案
 
-> 版本：v0.2（Step 1 ~ Step 2 落地版）
+> 版本：v0.3（Step 1 ~ Step 3 落地版）
 > 技术底座：Java 17 / Spring Boot 3.5.16 / Spring AI 1.1.8 / Redis / PostgreSQL + PGVector / Resilience4j 2.4.0
 
 ---
@@ -160,7 +160,7 @@ INIT → PLANNING → RUNNING ⇄ TOOL_CALLING → COMPLETED
 
 ---
 
-## 5. 记忆系统设计：Redis 多层记忆（Step 3）
+## 5. 记忆系统设计：Redis 多层记忆（Step 3 已实现）
 
 ### 5.1 分层模型
 
@@ -186,6 +186,13 @@ cosy:session:{sessionId}:summary    # 会话滚动摘要（String，TTL=30m）
 cosy:long:{userId}:fact:{factId}    # 长期事实（String，TTL=180d）
 cosy:lock:{taskId}                  # 任务并发锁（用于幂等/防重入）
 ```
+
+### 5.4 实现状态（Step 3 已落地）
+
+- `RedisMemoryStore`：实现 `MemoryStore` 契约，Key 规范 `cosy:{level}:{namespace}:{key}`（work/session/long），TTL 分层（WORKING=10m / SESSION=30m / LONG_TERM=180d，均可配置）；
+- 记忆接入：`DefaultReActAgent` 运行前注入【会话记忆】+【用户长期记忆】到系统提示，运行后持久化滚动会话记录（最近 6 条）与工作状态；
+- 降级：记忆读写失败自动降级为无记忆直答（仅告警，不阻断推理）；
+- 检索：当前为关键词包含过滤，Step 4 升级为向量化语义检索。
 
 ---
 
@@ -302,7 +309,7 @@ CREATE TABLE agent_trace (
 | --- | --- | --- | --- | --- |
 | **Step 1** | 基础框架 | Maven 工程、分层骨架、核心契约（Agent/Tool/Memory/Vector）、ToolRegistry、统一接口、配置体系、测试 | 工程可编译；`mvn test` 通过；服务可启动；接口可调用 | ✅ 已交付 |
 | **Step 2** | ReAct 编排 | DefaultReActAgent 实现（ChatModel 手动循环）、AgentToolBridging 工具桥接（FunctionTool）、迭代与终止逻辑 | Mock/真实 LLM 下可完成"规划→调用工具→多轮→回答"闭环；超迭代/异常正确终止 | ✅ 已交付 |
-| Step 3 | Redis 多层记忆 | RedisMemoryStore 实现、滚动摘要、长期事实抽取 | 跨会话长期记忆命中；会话恢复不丢上下文 | 待实施 |
+| **Step 3** | Redis 多层记忆 | RedisMemoryStore 实现、滚动会话记录、记忆注入与持久化、自动降级 | 跨会话/多轮记忆命中；Redis 不可用时降级不崩溃；真实 Redis 集成测试通过（REDIS_IT=true） | ✅ 已交付 |
 | Step 4 | PGVector 知识检索 | 文档入库管线、RAG 检索注入 | 知识库问答命中率达标；命名空间隔离生效 | 待实施 |
 | Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | 待实施 |
 | Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
@@ -311,7 +318,7 @@ CREATE TABLE agent_trace (
 
 ---
 
-## 11. 交付说明（Step 1 / Step 2）
+## 11. 交付说明（Step 1 ~ Step 3）
 
 ### 11.1 Step 1 已落地内容
 
@@ -330,11 +337,20 @@ CREATE TABLE agent_trace (
 
 > 说明：真实 LLM 链路需配置 `OPENAI_API_KEY`；未配置时请求返回 `state=FAILED` 与错误信息（优雅降级，不崩溃）。
 
-### 11.3 运行与验证
+### 11.3 Step 3 已落地内容
+
+- `RedisMemoryStore`：`MemoryLevel` 分层（WORKING/SESSION/LONG_TERM）、Key 前缀 `cosy:work|session|long`、TTL 分层（record 自带 TTL 优先，否则用层级默认）；
+- 记忆接入 ReAct 循环：系统提示注入【会话记忆】+【用户长期记忆】；运行后持久化滚动会话（最近 6 条）与工作状态；读写失败自动降级；
+- 契约调整：`MemoryRecord` / `MemoryStore` 使用 `namespace`（会话用 sessionId、长期记忆用 userId）；
+- 配置：`cosy.agent.working-timeout`（默认 10m）；Redis 纳入健康检查；
+- 测试：`RedisMemoryStoreTest`（Mock 单测 6 项）+ `RedisMemoryStoreIntegrationTest`（真实 Redis 3 项，`REDIS_IT=true` 时执行）+ Agent 记忆集成测试（注入/持久化/降级 3 项），全量 23 项通过。
+
+### 11.4 运行与验证
 
 ```bash
-mvn test                        # 全部测试通过
-mvn spring-boot:run             # 启动（无 Redis/LLM 时不影响框架运行）
+mvn test                        # 全部测试通过（23 项）
+REDIS_IT=true mvn test          # 追加真实 Redis 集成测试（需本地 Redis）
+mvn spring-boot:run             # 启动（Redis 未启动时记忆自动降级）
 
 curl http://localhost:8080/api/agent/status
 curl http://localhost:8080/api/agent/tools
@@ -342,9 +358,9 @@ curl -X POST http://localhost:8080/api/agent/chat \
   -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"现在几点？"}'
 ```
 
-### 11.4 仓库地址
+### 11.5 仓库地址
 
-`https://github.com/Han03/CosyAgent.git`（Step 1/Step 2 代码已推送 main 分支）
+`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 代码已推送 main 分支）
 
 ---
 

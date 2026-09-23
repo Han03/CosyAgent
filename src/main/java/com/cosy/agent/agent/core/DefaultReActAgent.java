@@ -1,7 +1,11 @@
 package com.cosy.agent.agent.core;
 
+import com.cosy.agent.agent.memory.MemoryLevel;
+import com.cosy.agent.agent.memory.MemoryRecord;
+import com.cosy.agent.agent.memory.MemoryStore;
 import com.cosy.agent.agent.tool.AgentTool;
 import com.cosy.agent.agent.tool.ToolRegistry;
+import com.cosy.agent.config.AgentProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,6 +25,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 默认 ReAct 智能体：Thought → Action → Observation 循环。
@@ -29,11 +34,19 @@ import java.util.Map;
  * 调用 LLM 获得思考与工具调用意图 → 经 ToolRegistry 执行工具 → 将工具结果作为
  * Observation 回传模型 → 重复，直至模型给出最终回答或触发终止条件。
  * 终止条件：最终回答 / 达到 max-iterations / LLM 调用异常。</p>
+ *
+ * <p>Step 3 记忆集成：运行前注入会话记忆与长期记忆到系统提示；
+ * 运行后持久化最近对话（滚动窗口）与工作状态。记忆读写失败自动降级为无记忆直答。</p>
  */
 @Service
 public class DefaultReActAgent implements ReActAgent {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultReActAgent.class);
+
+    /** 滚动会话记录保留条数（约 3 轮对话） */
+    private static final int RECENT_LIMIT = 6;
+
+    private static final String RECENT_KEY = "recent";
 
     private static final String SYSTEM_PROMPT = """
             你是 CosyAgent，一个企业级任务型智能体。请遵循 ReAct 模式完成任务：
@@ -46,12 +59,17 @@ public class DefaultReActAgent implements ReActAgent {
     private final ChatModel chatModel;
     private final OpenAiChatOptions chatOptions;
     private final ToolRegistry toolRegistry;
+    private final MemoryStore memoryStore;
+    private final AgentProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public DefaultReActAgent(ChatModel chatModel, OpenAiChatOptions chatOptions, ToolRegistry toolRegistry) {
+    public DefaultReActAgent(ChatModel chatModel, OpenAiChatOptions chatOptions,
+                             ToolRegistry toolRegistry, MemoryStore memoryStore, AgentProperties properties) {
         this.chatModel = chatModel;
         this.chatOptions = chatOptions;
         this.toolRegistry = toolRegistry;
+        this.memoryStore = memoryStore;
+        this.properties = properties;
     }
 
     @Override
@@ -64,7 +82,7 @@ public class DefaultReActAgent implements ReActAgent {
         long start = System.currentTimeMillis();
 
         List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(SYSTEM_PROMPT));
+        messages.add(new SystemMessage(buildSystemPrompt(context)));
         messages.add(new UserMessage(userInput));
 
         List<AgentMessage> trace = new ArrayList<>();
@@ -126,8 +144,69 @@ public class DefaultReActAgent implements ReActAgent {
             answer = "已达到最大迭代次数（" + context.maxIterations() + " 轮），任务未能完成。";
         }
 
+        persistMemory(context, userInput, answer, state);
+
         return new AgentResult(context.sessionId(), answer, state, List.copyOf(trace), iterations,
                 System.currentTimeMillis() - start, errorMessage);
+    }
+
+    /**
+     * 组装系统提示：基础 ReAct 指令 + 会话记忆 + 长期记忆。
+     * 记忆读取失败时降级（不阻断推理）。
+     */
+    private String buildSystemPrompt(AgentContext context) {
+        StringBuilder sb = new StringBuilder(SYSTEM_PROMPT);
+        appendMemoryBlock(sb, "会话记忆", MemoryLevel.SESSION, context.sessionId());
+        appendMemoryBlock(sb, "用户长期记忆", MemoryLevel.LONG_TERM, context.userId());
+        return sb.toString();
+    }
+
+    private void appendMemoryBlock(StringBuilder sb, String label, MemoryLevel level, String namespace) {
+        try {
+            List<MemoryRecord> records = memoryStore.list(level, namespace);
+            if (!records.isEmpty()) {
+                sb.append("\n\n【").append(label).append("】\n");
+                records.forEach(r -> sb.append("- ").append(r.key()).append(": ").append(r.value()).append('\n'));
+            }
+        } catch (Exception e) {
+            log.warn("记忆读取失败，降级为无记忆: level={}, namespace={}", level, namespace, e);
+        }
+    }
+
+    /** 运行后持久化：滚动会话记录 + 工作状态。写入失败仅告警，不影响返回结果。 */
+    private void persistMemory(AgentContext context, String userInput, String answer, AgentState state) {
+        try {
+            persistConversation(context.sessionId(), userInput, answer);
+            memoryStore.save(MemoryRecord.of(MemoryLevel.WORKING, context.sessionId(),
+                    "state", state.name(), properties.workingTimeout()));
+        } catch (Exception e) {
+            log.warn("记忆写入失败，忽略: sessionId={}", context.sessionId(), e);
+        }
+    }
+
+    private void persistConversation(String sessionId, String userInput, String answer) {
+        List<Map<String, String>> recent = loadRecent(sessionId);
+        recent.add(Map.of("role", "user", "content", userInput));
+        if (answer != null) {
+            recent.add(Map.of("role", "assistant", "content", answer));
+        }
+        int from = Math.max(0, recent.size() - RECENT_LIMIT);
+        recent = new ArrayList<>(recent.subList(from, recent.size()));
+        memoryStore.save(MemoryRecord.of(MemoryLevel.SESSION, sessionId, RECENT_KEY,
+                toJson(recent), properties.sessionTimeout()));
+    }
+
+    private List<Map<String, String>> loadRecent(String sessionId) {
+        Optional<String> json = memoryStore.load(MemoryLevel.SESSION, sessionId, RECENT_KEY);
+        if (json.isEmpty()) {
+            return new ArrayList<>();
+        }
+        try {
+            return new ArrayList<>(objectMapper.readValue(json.get(), new TypeReference<List<Map<String, String>>>() {
+            }));
+        } catch (JsonProcessingException e) {
+            return new ArrayList<>();
+        }
     }
 
     private Map<String, Object> parseArgs(String arguments) {

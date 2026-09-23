@@ -1,5 +1,6 @@
 package com.cosy.agent;
 
+import com.cosy.agent.agent.memory.MemoryStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -15,10 +16,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -26,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Agent HTTP 接口集成测试：以 Mock LLM 驱动完整 ReAct 链路（工具调用 → 最终回答）。
+ * Agent HTTP 接口集成测试：以 Mock LLM + Mock 记忆驱动完整 ReAct 链路（不依赖外部服务）。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -38,8 +41,14 @@ class AgentApiIntegrationTest {
     @MockitoBean
     private ChatModel chatModel;
 
+    @MockitoBean
+    private MemoryStore memoryStore;
+
     @BeforeEach
-    void stubLlm() {
+    void stubDependencies() {
+        lenient().when(memoryStore.list(any(), any())).thenReturn(List.of());
+        lenient().when(memoryStore.load(any(), any(), any())).thenReturn(Optional.empty());
+
         AssistantMessage withToolCall = AssistantMessage.builder()
                 .content("我需要查询当前时间。")
                 .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "get_server_time", "{}")))
