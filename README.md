@@ -15,21 +15,23 @@
 | PostgreSQL + PGVector | 任意 | 知识库向量检索 |
 | Resilience4j | 2.4.0 | Retry / CircuitBreaker / RateLimiter / TimeLimiter / Bulkhead |
 
-## 模块结构（Step 1 ~ Step 3 + Step M + Step 4 + Step 5 已落地）
+## 模块结构（Step 1 ~ Step 6 + Step M 已落地）
 
 ```
 src/main/java/com/cosy/agent
-├── common/          # 统一响应、错误码、全局异常
-├── config/          # AgentProperties（含 Mock 嵌套配置）、VectorProperties、MockChatConfig
+├── common/          # 统一响应、错误码（含 UNAUTHORIZED/TASK_NOT_FOUND）、全局异常
+├── config/          # AgentProperties（含 Mock 嵌套配置）、VectorProperties、TaskProperties、SecurityProperties、MockChatConfig
+├── security/        # ApiKeyFilter（Step 6：COSY_AGENT_API_KEY 配置后拦截 /api/** 校验 X-API-Key）
 ├── agent/
-│   ├── core/        # AgentState / AgentMessage / AgentContext / ReActAgent + DefaultReActAgent（Step 2/3/4/5 记忆+RAG+容错集成）
+│   ├── core/        # AgentState / AgentMessage / AgentContext / ReActAgent + DefaultReActAgent（Step 2/3/4/5 记忆+RAG+容错集成；Step 6 历史注入）
 │   ├── tool/        # AgentTool 契约（retryable）+ ToolRegistry + AgentToolBridging（Step 2 桥接 FunctionTool）
 │   ├── memory/      # MemoryLevel / MemoryStore 契约 + RedisMemoryStore（Step 3 已实现，MEMORY 容错接线）
 │   ├── mock/        # MockChatModelDecorator + MockScriptEngine + 剧本库（Step M 已实现）
 │   ├── vector/      # 切分/向量化 + InMemory/PGVector 双存储 + RAG 注入（Step 4 已实现，VECTOR 容错接线）
+│   ├── task/        # AgentTask + TaskStore + InMemoryTaskStore / JdbcTaskStore（Step 6：任务状态机与轨迹持久化，TASK 容错接线）
 │   └── resilience/  # ResilienceTarget + ResilienceSupport 组合链（Step 5 已实现：重试/熔断/限流/超时/舱壁）
-├── service/         # AgentOrchestrator 编排入口
-└── controller/      # /api/agent/** HTTP 接口（含知识库 upsert/search）
+├── service/         # AgentOrchestrator 编排入口（Step 6：INIT→RUNNING→终态 + resume 断点恢复）
+└── controller/      # /api/agent/** HTTP 接口（chat/tools/status/knowledge + Step 6 tasks/{taskId}/tasks/resume）
 ```
 
 ## 快速开始
@@ -62,10 +64,21 @@ curl http://localhost:8080/actuator/health
 curl http://localhost:8080/api/agent/tools
 curl -X POST http://localhost:8080/api/agent/chat \
   -H 'Content-Type: application/json' \
-  -d '{"sessionId":"demo-1","message":"现在几点？"}'
+  -d '{"sessionId":"demo-1","message":"现在几点？"}'      # 返回 data.taskId
+curl http://localhost:8080/api/agent/tasks/<taskId>        # 任务详情（含轨迹审计）
+curl "http://localhost:8080/api/agent/tasks?sessionId=demo-1"  # 会话任务列表
+curl -X POST http://localhost:8080/api/agent/tasks/<taskId>/resume \
+  -H 'Content-Type: application/json' -d '{"message":"继续"}'  # 断点恢复
 ```
 
-> 说明：`/api/agent/chat` 需配置真实 `OPENAI_API_KEY` 才能走通真实 LLM 推理；无 Key 时可开启 `COSY_AGENT_MOCK_ENABLED=true` 走 Mock 模式（剧本引擎替代模型推理，工具执行/ReAct 编排/记忆/知识检索全链路真实运行，`mode=random` 演示随机性、`mode=scripted`+seed 可复现，详见 `docs/LLM Mock 端到端模块设计方案.md`）。知识检索默认内存实现（无外部依赖）；`COSY_AGENT_VECTOR_STORE=pgvector` 切换 PostgreSQL + PGVector 生产形态。
+> 说明：`/api/agent/chat` 需配置真实 `OPENAI_API_KEY` 才能走通真实 LLM 推理；无 Key 时可开启 `COSY_AGENT_MOCK_ENABLED=true` 走 Mock 模式（剧本引擎替代模型推理，工具执行/ReAct 编排/记忆/知识检索/任务持久化全链路真实运行，`mode=random` 演示随机性、`mode=scripted`+seed 可复现，详见 `docs/LLM Mock 端到端模块设计方案.md`）。知识检索默认内存实现（无外部依赖）；`COSY_AGENT_VECTOR_STORE=pgvector` 切换 PostgreSQL + PGVector 生产形态；任务持久化默认内存，`COSY_AGENT_TASK_STORE=pg` 切换 PostgreSQL 任务表/轨迹表（生产形态）；配置 `COSY_AGENT_API_KEY` 后 `/api/**` 需携带 `X-API-Key` 请求头。
+
+## Docker / K8s 部署
+
+```bash
+docker compose up -d --build     # Redis + PGVector + 应用（生产形态：向量检索与任务持久化均走 PostgreSQL）
+kubectl apply -f deploy/k8s/     # K8s：Secret/ConfigMap + 2 副本 Deployment + 探针 + ClusterIP Service
+```
 
 ## 分步路线图
 
@@ -77,11 +90,11 @@ curl -X POST http://localhost:8080/api/agent/chat \
 | Step M | LLM 端到端 Mock 模块：ChatModel 装饰器 + 剧本引擎 + 随机性注入，开关开启时全链路可跑通 | ✅ 已交付 |
 | Step 4 | PGVector 知识检索：文档切分、向量化、InMemory/PGVector 双存储、RAG 检索注入、命名空间隔离 | ✅ 已交付 |
 | Step 5 | Resilience4j 容错：重试/熔断/限流/超时/舱壁与降级（ResilienceSupport 组合链 + yaml 声明式策略） | ✅ 已交付 |
-| Step 6 | 状态持久化与生产化：任务状态机、轨迹存储、安全与可观测性 | 待实施 |
+| Step 6 | 状态持久化与生产化：任务状态机（INIT→RUNNING→终态）、agent_task/agent_trace 轨迹持久化、断点恢复 resume、API 鉴权（X-API-Key）、Docker/K8s 部署物 | ✅ 已交付 |
 
 ## 测试
 
 ```bash
-mvn test               # 54 项：上下文加载 + 工具 + ReAct + 记忆 + Mock + 容错 + 知识检索（切分/向量化/内存存储/接口/RAG 注入）
-REDIS_IT=true PGVECTOR_IT=true mvn test # 全量 60 项：追加真实 Redis（3）+ 真实 PGVector（3）集成测试（需本地 Redis/PostgreSQL+pgvector）
+mvn test               # 70 项：上下文加载 + 工具 + ReAct + 记忆 + Mock + 容错 + 知识检索 + 任务存储 + 编排状态机 + 鉴权
+REDIS_IT=true PGVECTOR_IT=true TASK_IT=true mvn test # 全量 78 项：追加真实 Redis（3）+ 真实 PGVector（3）+ JdbcTaskStore（2）集成测试（需本地 Redis/PostgreSQL+pgvector）
 ```

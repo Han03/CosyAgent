@@ -335,6 +335,16 @@ CREATE TABLE agent_trace (
 
 恢复机制：任务中断后，读取 `agent_task` + `agent_trace` 重建 `AgentContext` 与历史，从断点继续迭代。
 
+**实现状态（Step 6 已落地）**
+
+- `agent.task` 包：`AgentTask`（record：taskId/sessionId/userId/state/input/output/iterations/costMs/errorMessage/createdAt/updatedAt/finishedAt，`created()` 置 INIT）+ `TaskStore` 接口（createTask/updateTask/appendTrace/findById/findBySession）+ **`InMemoryTaskStore`**（默认，`cosy.agent.task.store=memory`，轨迹按长度判幂等）+ **`JdbcTaskStore`**（`store=pg`，原生 JDBC，启动自建上表 + 两索引，经 `ResilienceTarget.TASK` 容错，按已落库行数判幂等，taskId 格式 `task-`+16Hex）；
+- 状态机接线：`AgentOrchestrator.chat()` = createTask(INIT) → updateTask(RUNNING) → 携带 taskId 的 ReAct 循环 → finish(终态 + appendTrace)；**持久化失败仅 log.warn 不阻断对话**；
+- **断点恢复**：`POST /api/agent/tasks/{taskId}/resume` 读取历史任务轨迹（USER/ASSISTANT/TOOL 三类经 `ReActAgent.run(context, input, history)` 三参重载转 Spring Message 注入模型上下文），产生**新任务**继续运行；
+- 任务接口：`GET /api/agent/tasks/{taskId}`（详情含轨迹）、`GET /api/agent/tasks?sessionId=&limit=`（列表，更新倒序）；
+- **API 鉴权**：`security.ApiKeyFilter`（配置 `COSY_AGENT_API_KEY` 后拦截 `/api/**` 校验 `X-API-Key`，401 返回统一错误结构；未配置不装配，本地开发不受影响）；
+- **部署物**：`Dockerfile`（maven 多阶段 → temurin-17-jre + HEALTHCHECK + MaxRAMPercentage=75）、`docker-compose.yml`（redis:7 + pgvector/pgvector:pg16 + app，生产形态 `vector_store=pgvector / task_store=pg`，依赖健康检查）、`deploy/k8s/cosy-agent.yaml`（Secret/ConfigMap + Deployment 2 副本 + 就绪/存活探针 + 资源配额 + ClusterIP Service）；
+- 测试：`InMemoryTaskStoreTest`（5）+ `AgentOrchestratorTest`（5，状态机/resume/未知任务）+ `ApiKeyFilterTest`（4）+ `JdbcTaskStoreIntegrationTest`（2，`TASK_IT=true` 在真实 PostgreSQL 上建表/持久化/幂等验证）+ `DefaultReActAgentTest` 历史注入/taskId 透传（+2），**全量 78 项通过**（含真实 Redis 3 + PGVector 3 + JdbcTaskStore 2）。
+
 ---
 
 ## 9. 可观测性与安全
@@ -358,14 +368,14 @@ CREATE TABLE agent_trace (
 | **Step 3** | Redis 多层记忆 | RedisMemoryStore 实现、滚动会话记录、记忆注入与持久化、自动降级 | 跨会话/多轮记忆命中；Redis 不可用时降级不崩溃；真实 Redis 集成测试通过（REDIS_IT=true） | ✅ 已交付 |
 | **Step 4** | PGVector 知识检索 | 文档入库管线（切分/向量化/双存储）、RAG 检索注入、命名空间隔离、知识接口 | 知识库问答命中率达标；命名空间隔离生效；真实 PGVector 集成测试通过（PGVECTOR_IT=true） | ✅ 已交付 |
 | Step 5 | Resilience4j 容错 | 策略配置 + 降级实现 + 容错指标 | 模拟 LLM/Redis 故障时系统不雪崩、可降级 | ✅ 已交付 |
-| Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | 待实施 |
-| **Step M** | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性；35 项测试通过 | ✅ 已交付 |
+| Step 6 | 持久化与生产化 | 任务状态机、轨迹持久化、鉴权、部署（Docker/K8s） | 任务断点恢复；审计轨迹完整；可灰度上线 | ✅ 已交付 |
+| **Step M** | LLM 端到端 Mock 模块 | ChatModel 装饰器 + 剧本引擎 + 随机性注入 + 条件装配 | 开关开启时全链路可跑通（无真实 Key）；scripted 模式可复现；random 模式有随机性；78 项全量测试通过 | ✅ 已交付 |
 
 每步独立可交付、可回滚；后续步骤不破坏 Step 1 契约（接口稳定是硬约束）。
 
 ---
 
-## 11. 交付说明（Step 1 ~ Step 3 + Step M + Step 4 + Step 5）
+## 11. 交付说明（Step 1 ~ Step 6 + Step M）
 
 ### 11.1 Step 1 已落地内容
 
@@ -395,8 +405,8 @@ CREATE TABLE agent_trace (
 ### 11.4 运行与验证
 
 ```bash
-mvn test                        # 全部单测通过（54 项；PG/Redis 集成默认跳过）
-REDIS_IT=true PGVECTOR_IT=true mvn test   # 全量 60 项：追加真实 Redis（3）+ 真实 PGVector（3）集成测试（需本地 Redis/PostgreSQL）
+mvn test                        # 全部单测通过（70 项；PG/Redis/任务集成默认跳过）
+REDIS_IT=true PGVECTOR_IT=true TASK_IT=true mvn test   # 全量 78 项：追加真实 Redis（3）+ 真实 PGVector（3）+ JdbcTaskStore（2）集成测试（需本地 Redis/PostgreSQL）
 mvn spring-boot:run             # 启动（Redis/PG 不可用时对应能力自动降级）
 
 curl http://localhost:8080/api/agent/status
@@ -407,12 +417,18 @@ curl -X POST http://localhost:8080/api/agent/knowledge/upsert \
 curl -X POST http://localhost:8080/api/agent/knowledge/search \
   -H 'Content-Type: application/json' -d '{"namespace":"hr","query":"如何重置密码","topK":3}'
 curl -X POST http://localhost:8080/api/agent/chat \
-  -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"如何重置密码？"}'
+  -H 'Content-Type: application/json' -d '{"sessionId":"s1","message":"如何重置密码？"}'   # 返回 data.taskId
+curl http://localhost:8080/api/agent/tasks/<taskId>        # 任务详情（含轨迹审计，Step 6）
+curl "http://localhost:8080/api/agent/tasks?sessionId=s1"  # 会话任务列表（Step 6）
+curl -X POST http://localhost:8080/api/agent/tasks/<taskId>/resume \
+  -H 'Content-Type: application/json' -d '{"message":"继续"}'   # 断点恢复（Step 6）
+# 生产鉴权（配置 COSY_AGENT_API_KEY 后）：所有 /api/** 请求需带
+#   -H 'X-API-Key: <COSY_AGENT_API_KEY>'
 ```
 
 ### 11.5 仓库地址
 
-`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 3 + Step M + Step 4 + Step 5 代码已推送 main 分支，commit 链 `7ceef15 → 462b7ed → 52c6ce5 → ae49599 → 96e1e48 → 9371bdb`）
+`https://github.com/Han03/CosyAgent.git`（Step 1 ~ Step 6 + Step M 代码已推送 main 分支，commit 链 `7ceef15 → 462b7ed → 52c6ce5 → ae49599 → 96e1e48 → 9371bdb → 0d7a6fe → 6c4c16f`）
 
 ### 11.6 Step M 已落地内容
 
@@ -436,6 +452,16 @@ curl -X POST http://localhost:8080/api/agent/chat \
 - 配置：`application.yml` resilience4j 五类策略全量声明（llm 3×2s / tool 2×1s / memory 2×500ms / vector 2×500ms 重试；20 窗口 50% 熔断；llm 60/min、tool 120/min 限流；60s/30s/2s/5s 超时；8 并发舱壁）+ 健康检查 circuitbreakers 指标；
 - **关键实现决策**：resilience4j 2.x `instance(name)` 单参重载返回默认配置（按名配置不生效），统一改 `getConfiguration(name)` 门控 + 双参重载（详见 7.4）；
 - 测试：`ResilienceSupportTest`（5）+ `DefaultReActAgentTest` 容错用例（+2）+ `TestResilience` 助手，全量 60 项通过（含真实 Redis 3 + PGVector 3）；Mock 模式真实运行验证：启动健康 UP、对话走通"规划→工具→回答"闭环。
+
+### 11.9 Step 6 已落地内容
+
+- `agent.task`：`AgentTask` / `TaskStore` / `InMemoryTaskStore`（默认）/ `JdbcTaskStore`（`cosy.agent.task.store=pg`，原生 JDBC 自建 `agent_task`/`agent_trace` 表 + 两索引，容错走 `ResilienceTarget.TASK`）；taskId 格式 `task-<16Hex>`；
+- 任务状态机：`AgentOrchestrator.chat` = INIT → RUNNING → COMPLETED/FAILED/TIMEOUT，轨迹 `appendTrace` 幂等（内存按长度、PG 按落库行数）；持久化失败仅告警不阻断对话；
+- 断点恢复：`resume(sourceTaskId, input)` 读取历史任务轨迹注入模型上下文（USER/ASSISTANT/TOOL → Spring Message）产生新任务；`ReActAgent` 新增三参 `run(context, input, history)`；
+- 生产化：`ApiKeyFilter`（`COSY_AGENT_API_KEY` 配置后拦截 `/api/**` 校验 `X-API-Key`，空值不装配）+ 任务 HTTP 接口（详情/列表/resume）+ `/status` step=6；`ErrorCode` 新增 `UNAUTHORIZED(401)`、`TASK_NOT_FOUND(10008)`；
+- 部署物：`Dockerfile`（多阶段 + HEALTHCHECK + MaxRAMPercentage=75）、`docker-compose.yml`（redis + pgvector + app 生产形态）、`deploy/k8s/cosy-agent.yaml`（2 副本 + 探针 + Secret/ConfigMap + 资源配额）；
+- 测试：+17 项（任务存储 5 / 编排状态机 5 / 鉴权 4 / JdbcTaskStore 真实 PG 2 / ReAct 历史注入 2），**全量 78 项全绿**（`REDIS_IT=true PGVECTOR_IT=true TASK_IT=true mvn test`）；
+- 真实运行验证（Mock 模式 28080）：chat 返回 `taskId` → 任务详情（state=COMPLETED、iterations=2、trace=5 条）→ 会话列表 → resume 产生新任务并注入历史轨迹。
 
 ---
 
