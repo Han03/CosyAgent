@@ -70,6 +70,7 @@ public class DefaultReActAgent implements ReActAgent {
 
     private final ChatModel chatModel;
     private final OpenAiChatOptions chatOptions;
+    private final com.cosy.agent.agent.router.ModelRouter modelRouter;
     private final ToolRegistry toolRegistry;
     private final MemoryStore memoryStore;
     private final VectorKnowledgeStore vectorStore;
@@ -80,12 +81,14 @@ public class DefaultReActAgent implements ReActAgent {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public DefaultReActAgent(ChatModel chatModel, OpenAiChatOptions chatOptions,
+                             com.cosy.agent.agent.router.ModelRouter modelRouter,
                              ToolRegistry toolRegistry, MemoryStore memoryStore,
                              VectorKnowledgeStore vectorStore, ResilienceSupport resilience,
                              AgentProperties properties, VectorProperties vectorProperties,
                              MockScriptEngine mockEngine) {
         this.chatModel = chatModel;
         this.chatOptions = chatOptions;
+        this.modelRouter = modelRouter;
         this.toolRegistry = toolRegistry;
         this.memoryStore = memoryStore;
         this.vectorStore = vectorStore;
@@ -134,9 +137,14 @@ public class DefaultReActAgent implements ReActAgent {
             boolean useMock = isMockActive(context);
             ChatResponse response;
             try {
-                response = resilience.execute(ResilienceTarget.LLM,
-                        () -> useMock ? mockEngine.generate(new Prompt(messages, chatOptions))
-                                : chatModel.call(new Prompt(messages, chatOptions)));
+                if (useMock) {
+                    // Mock 开启：短路到剧本引擎（不进入模型路由）
+                    response = resilience.execute(ResilienceTarget.LLM,
+                            () -> mockEngine.generate(new Prompt(messages, chatOptions)));
+                } else {
+                    // 真实模型：走模型路由（候选链 + 降级；每个候选内部已套 llm 容错）
+                    response = modelRouter.call(new Prompt(messages, chatOptions), context.modelChoice()).response();
+                }
             } catch (Exception e) {
                 log.error("LLM 调用失败，sessionId={}, iteration={}", context.sessionId(), iterations, e);
                 state = AgentState.FAILED;

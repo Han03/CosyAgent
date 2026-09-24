@@ -39,13 +39,19 @@ public class AgentOrchestrator {
     }
 
     public AgentResult chat(String sessionId, String userId, String input, Boolean mockOverride) {
+        return chat(sessionId, userId, input, mockOverride, null);
+    }
+
+    /** 会话惰性创建 + 模型选择透传（模型路由 v2：X-Cosy-Model 请求头） */
+    public AgentResult chat(String sessionId, String userId, String input, Boolean mockOverride, String modelChoice) {
         // 会话惰性创建：未提供 sessionId 时生成（客户端首条消息触发，任务 input 即会话名）
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = "s-" + java.util.UUID.randomUUID().toString().substring(0, 8);
         }
         AgentTask task = taskStore.createTask(sessionId, userId, input);
         markRunning(task);
-        AgentContext context = AgentContext.create(sessionId, userId, properties.maxIterations(), task.taskId(), mockOverride);
+        AgentContext context = AgentContext.create(
+                sessionId, userId, properties.maxIterations(), task.taskId(), mockOverride, modelChoice);
         AgentResult result = reactAgent.run(context, input);
         finish(task.taskId(), result);
         return result;

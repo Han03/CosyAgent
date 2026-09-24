@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -39,20 +40,25 @@ public class AgentController {
     private final ToolRegistry toolRegistry;
     private final TaskStore taskStore;
     private final MemoryStore memoryStore;
+    private final com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin;
 
     public AgentController(AgentOrchestrator orchestrator, ToolRegistry toolRegistry, TaskStore taskStore,
-                           MemoryStore memoryStore) {
+                           MemoryStore memoryStore, com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin) {
         this.orchestrator = orchestrator;
         this.toolRegistry = toolRegistry;
         this.taskStore = taskStore;
         this.memoryStore = memoryStore;
+        this.modelRoutingAdmin = modelRoutingAdmin;
     }
 
-    /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID） */
+    /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID；
+     * X-Cosy-Model 请求头指定模型或 auto） */
     @PostMapping("/chat")
     public Result<AgentResult> chat(@Valid @RequestBody ChatRequest request,
-                                    @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader) {
-        return Result.ok(orchestrator.chat(request.sessionId(), "anonymous", request.message(), parseMock(mockHeader)));
+                                    @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader,
+                                    @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader) {
+        return Result.ok(orchestrator.chat(request.sessionId(), "anonymous", request.message(),
+                parseMock(mockHeader), parseModel(modelHeader)));
     }
 
     /** 任务详情（主记录 + 执行轨迹审计，Step 6） */
@@ -121,7 +127,8 @@ public class AgentController {
     /** 断点恢复：以历史任务轨迹为上下文继续执行（新任务，Step 6） */
     @PostMapping("/tasks/{taskId}/resume")
     public Result<AgentResult> resume(@PathVariable String taskId, @Valid @RequestBody ResumeRequest request,
-                                      @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader) {
+                                      @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader,
+                                      @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader) {
         return Result.ok(orchestrator.resume(taskId, request.message(), parseMock(mockHeader)));
     }
 
@@ -140,6 +147,28 @@ public class AgentController {
                 "tools", toolRegistry.size()));
     }
 
+    // ---- 模型路由管理（模型路由 v2：配置权威在后端） ----
+
+    /** 当前模型路由配置（api-key 脱敏回显，仅标记是否已配置） */
+    @GetMapping("/model-routing")
+    public Result<Map<String, Object>> modelRouting() {
+        return Result.ok(modelRoutingAdmin.getConfig());
+    }
+
+    /** 全量更新模型路由配置（api-key 空 = 保持原值；热更新即时生效） */
+    @PutMapping("/model-routing")
+    public Result<Boolean> updateModelRouting(
+            @Valid @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.UpdateRequest request) {
+        modelRoutingAdmin.updateConfig(request);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 模型选择器数据源（客户端聊天页：auto + 可用模型列表） */
+    @GetMapping("/model-routing/catalog")
+    public Result<Map<String, Object>> modelCatalog() {
+        return Result.ok(modelRoutingAdmin.catalog());
+    }
+
     /** 解析 X-Cosy-Mock 请求头：true/1/on → 开；false/0/off → 关；其他/缺失 → 回退全局配置 */
     private Boolean parseMock(String header) {
         if (header == null || header.isBlank()) {
@@ -150,6 +179,15 @@ public class AgentController {
             case "false", "0", "off" -> Boolean.FALSE;
             default -> null;
         };
+    }
+
+    /** 解析 X-Cosy-Model 请求头：auto/空白 → null（后端按路由类型链）；"平台/模型" → 原样透传 */
+    private String parseModel(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        String value = header.trim();
+        return "auto".equalsIgnoreCase(value) ? null : value;
     }
 
     public record ChatRequest(

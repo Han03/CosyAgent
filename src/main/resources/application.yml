@@ -54,6 +54,37 @@ cosy:
         unknown-tool: 0.1    # 工具名替换为未注册名（未知工具自愈路径）
         multi-tool: 0.1      # 单轮多工具并行
         error: 0.05          # 模型异常（FAILED 终止路径）
+    model-routing:
+      # 模型路由（Step R）：多平台候选链 + 按顺序降级；配置权威在后端
+      # （YAML 基线 + 管理 API 热更新，store 持久化可选）。请求头 X-Cosy-Model:
+      # auto（缺省）| platform/model 指定模型（锁定单候选，不跨模型降级）。
+      enabled: ${COSY_MODEL_ROUTING_ENABLED:true}
+      max-candidates: ${COSY_MODEL_ROUTING_MAX_CANDIDATES:5}   # 单链候选上限
+      store: ${COSY_MODEL_ROUTING_STORE:memory}                # memory | pg | mysql
+      platforms:
+        openai:                       # 平台名（唯一标识）；回退 openai 即默认单模型等价
+          base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+          api-key: ${OPENAI_API_KEY:sk-demo}
+        deepseek:
+          base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+          api-key: ${DEEPSEEK_API_KEY:}
+      routes:
+        default:                      # auto 模式默认链（降级顺序）
+          - openai/gpt-4o-mini
+          - deepseek/deepseek-chat
+        reasoning:
+          - openai/gpt-4o
+          - deepseek/deepseek-reasoner
+      pg:
+        # store=pg 时生效（原生 JDBC，与 task store 同库同源）
+        url: ${COSY_MODEL_ROUTING_PG_URL:jdbc:postgresql://localhost:5432/cosy}
+        username: ${COSY_MODEL_ROUTING_PG_USER:postgres}
+        password: ${COSY_MODEL_ROUTING_PG_PASSWORD:postgres}
+      mysql:
+        # store=mysql 时生效
+        url: ${COSY_MODEL_ROUTING_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+        username: ${COSY_MODEL_ROUTING_MYSQL_USER:cosy}
+        password: ${COSY_MODEL_ROUTING_MYSQL_PASSWORD:cosy}
     task:
       # 任务状态持久化（Step 6）：store=memory 为内存实现（默认，无外部依赖，重启即失）；
       # store=pg 走 PostgreSQL（生产形态，表 agent_task/agent_trace 自建，需 PostgreSQL 运行）；

@@ -1,6 +1,8 @@
 package com.cosy.agent;
 
 import com.cosy.agent.agent.memory.MemoryStore;
+import com.cosy.agent.agent.router.ModelRouter;
+import com.cosy.agent.agent.router.RouteResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -44,6 +46,9 @@ class AgentApiIntegrationTest {
     @MockitoBean
     private MemoryStore memoryStore;
 
+    @MockitoBean
+    private ModelRouter modelRouter;
+
     @BeforeEach
     void stubDependencies() {
         lenient().when(memoryStore.list(any(), any())).thenReturn(List.of());
@@ -56,9 +61,9 @@ class AgentApiIntegrationTest {
         AssistantMessage finalAnswer = AssistantMessage.builder()
                 .content("当前时间是 2026-09-24 10:00:00。")
                 .build();
-        when(chatModel.call(any(Prompt.class)))
-                .thenReturn(new ChatResponse(List.of(new Generation(withToolCall))),
-                        new ChatResponse(List.of(new Generation(finalAnswer))));
+        when(modelRouter.call(any(Prompt.class), any()))
+                .thenReturn(RouteResult.direct(new ChatResponse(List.of(new Generation(withToolCall))), "openai/test"),
+                        RouteResult.direct(new ChatResponse(List.of(new Generation(finalAnswer))), "openai/test"));
     }
 
     @Test

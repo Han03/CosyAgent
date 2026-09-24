@@ -17,7 +17,9 @@ public enum ErrorCode {
     RATE_LIMITED(10007, "请求过于频繁，请稍后重试"),
     UNAUTHORIZED(401, "未授权"),
     TASK_NOT_FOUND(10008, "任务不存在"),
-    SESSION_NOT_FOUND(10009, "会话不存在");
+    SESSION_NOT_FOUND(10009, "会话不存在"),
+    MODEL_NOT_AVAILABLE(10010, "模型不可用"),
+    CONFIG_SAVE_FAILED(10011, "配置保存失败");
 
     private final int code;
     private final String message;

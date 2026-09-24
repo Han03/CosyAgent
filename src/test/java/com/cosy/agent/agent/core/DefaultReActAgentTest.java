@@ -2,6 +2,9 @@ package com.cosy.agent.agent.core;
 
 import com.cosy.agent.TestResilience;
 import com.cosy.agent.agent.memory.MemoryLevel;
+import com.cosy.agent.agent.router.ModelRouter;
+import com.cosy.agent.agent.router.RouteConfig;
+import com.cosy.agent.agent.router.RouteResult;
 import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
 import com.cosy.agent.agent.mock.MockScriptEngine;
@@ -51,6 +54,7 @@ import static org.mockito.Mockito.when;
 class DefaultReActAgentTest {
 
     private ChatModel chatModel;
+    private ModelRouter modelRouter;
     private MemoryStore memoryStore;
     private VectorKnowledgeStore vectorStore;
     private DefaultReActAgent agent;
@@ -58,24 +62,35 @@ class DefaultReActAgentTest {
     @BeforeEach
     void setUp() {
         chatModel = mock(ChatModel.class);
+        modelRouter = mock(ModelRouter.class);
         memoryStore = mock(MemoryStore.class);
         vectorStore = mock(VectorKnowledgeStore.class);
         AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
                 Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
         VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
         ToolRegistry registry = new ToolRegistry(List.of(new ServerTimeTool()));
-        agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), registry, memoryStore,
-                vectorStore, TestResilience.defaultResilience(), properties, vectorProperties, null);
+        agent = new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), modelRouter, registry,
+                memoryStore, vectorStore, TestResilience.defaultResilience(), properties, vectorProperties, null);
         when(memoryStore.list(any(), any())).thenReturn(List.of());
         when(memoryStore.load(any(), any(), any())).thenReturn(Optional.empty());
         when(vectorStore.search(any(), any(), anyInt(), anyDouble())).thenReturn(List.of());
+    }
+
+    /** 路由关闭的真实 ModelRouter：回退 defaultChatModel（容错测试验证 llm-retry/cb 落在模型调用上） */
+    private ModelRouter disabledRouter(ResilienceSupport resilience) {
+        return new ModelRouter(chatModel, OpenAiChatOptions.builder().build(), resilience,
+                new RouteConfig(false, 5, Map.of(), Map.of()));
+    }
+
+    private RouteResult route(ChatResponse response) {
+        return RouteResult.direct(response, "openai/test");
     }
 
     private DefaultReActAgent agentWith(ResilienceSupport resilience) {
         AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
                 Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
         VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
-        return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(),
+        return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), disabledRouter(resilience),
                 new ToolRegistry(List.of(new ServerTimeTool())), memoryStore, vectorStore,
                 resilience, properties, vectorProperties, null);
     }
@@ -93,9 +108,9 @@ class DefaultReActAgentTest {
 
     @Test
     void completesAfterToolObservation() {
-        when(chatModel.call(any(Prompt.class)))
-                .thenReturn(new ChatResponse(List.of(new Generation(toolCallMessage("我需要查询当前时间。", "get_server_time", "{}")))),
-                        response("当前时间已获取。"));
+        when(modelRouter.call(any(Prompt.class), any()))
+                .thenReturn(route(new ChatResponse(List.of(new Generation(toolCallMessage("我需要查询当前时间。", "get_server_time", "{}"))))),
+                        route(response("当前时间已获取。")));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "现在几点？");
 
@@ -109,9 +124,9 @@ class DefaultReActAgentTest {
 
     @Test
     void unknownToolIsReportedBackAsObservation() {
-        when(chatModel.call(any(Prompt.class)))
-                .thenReturn(new ChatResponse(List.of(new Generation(toolCallMessage("调用不存在工具。", "not_exist", "{}")))),
-                        response("该工具不存在，我无法完成。"));
+        when(modelRouter.call(any(Prompt.class), any()))
+                .thenReturn(route(new ChatResponse(List.of(new Generation(toolCallMessage("调用不存在工具。", "not_exist", "{}"))))),
+                        route(response("该工具不存在，我无法完成。")));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "调用不存在的工具");
 
@@ -121,8 +136,8 @@ class DefaultReActAgentTest {
 
     @Test
     void stopsAtMaxIterationsWhenModelKeepsCallingTools() {
-        when(chatModel.call(any(Prompt.class)))
-                .thenReturn(new ChatResponse(List.of(new Generation(toolCallMessage("继续查询。", "get_server_time", "{}")))));
+        when(modelRouter.call(any(Prompt.class), any()))
+                .thenReturn(route(new ChatResponse(List.of(new Generation(toolCallMessage("继续查询。", "get_server_time", "{}"))))));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 3), "现在几点？");
 
@@ -133,7 +148,7 @@ class DefaultReActAgentTest {
 
     @Test
     void reportsFailureWhenLlmThrows() {
-        when(chatModel.call(any(Prompt.class))).thenThrow(new RuntimeException("connection refused"));
+        when(modelRouter.call(any(Prompt.class), any())).thenThrow(new RuntimeException("connection refused"));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
 
@@ -148,12 +163,12 @@ class DefaultReActAgentTest {
                 .thenReturn(List.of(MemoryRecord.of(MemoryLevel.SESSION, "s1", "recent", "用户刚才问过天气", null)));
         when(memoryStore.list(eq(MemoryLevel.LONG_TERM), eq("u1")))
                 .thenReturn(List.of(MemoryRecord.of(MemoryLevel.LONG_TERM, "u1", "fact:1", "用户偏好: 简洁回答", null)));
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("好的。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("好的。")));
 
         agent.run(AgentContext.create("s1", "u1", 5), "继续");
 
         ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
-        verify(chatModel, atLeastOnce()).call(captor.capture());
+        verify(modelRouter, atLeastOnce()).call(captor.capture(), any());
         SystemMessage system = (SystemMessage) captor.getValue().getInstructions().get(0);
         assertThat(system.getText())
                 .contains("【会话记忆】").contains("用户刚才问过天气")
@@ -162,7 +177,7 @@ class DefaultReActAgentTest {
 
     @Test
     void persistsConversationAndWorkingStateAfterCompletion() {
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("已完成。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("已完成。")));
 
         agent.run(AgentContext.create("s1", "u1", 5), "执行任务");
 
@@ -178,7 +193,7 @@ class DefaultReActAgentTest {
     @Test
     void degradesGracefullyWhenMemoryUnavailable() {
         when(memoryStore.list(any(), any())).thenThrow(new RuntimeException("redis down"));
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("无记忆回答。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("无记忆回答。")));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
 
@@ -190,12 +205,12 @@ class DefaultReActAgentTest {
     void injectsKnowledgeHitsIntoSystemPrompt() {
         when(vectorStore.search(eq("default"), eq("如何重置密码"), eq(5), eq(0.15)))
                 .thenReturn(List.of(new VectorKnowledgeStore.KnowledgeHit("kb#0", "重置密码：进入设置页点击重置。", 0.91)));
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("好的。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("好的。")));
 
         agent.run(AgentContext.create("s1", "u1", 5), "如何重置密码");
 
         ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
-        verify(chatModel, atLeastOnce()).call(captor.capture());
+        verify(modelRouter, atLeastOnce()).call(captor.capture(), any());
         SystemMessage system = (SystemMessage) captor.getValue().getInstructions().get(0);
         assertThat(system.getText())
                 .contains("【知识库检索结果】").contains("重置密码：进入设置页点击重置。");
@@ -204,7 +219,7 @@ class DefaultReActAgentTest {
     @Test
     void degradesGracefullyWhenKnowledgeSearchFails() {
         when(vectorStore.search(any(), any(), anyInt(), anyDouble())).thenThrow(new RuntimeException("pg down"));
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("直答。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("直答。")));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "你好");
 
@@ -262,7 +277,7 @@ class DefaultReActAgentTest {
     @Test
     void injectsHistoryIntoModelContextOnResume() {
         // Step 6 断点恢复：历史 USER/ASSISTANT/TOOL 消息注入模型上下文（系统提示之后、本次输入之前）
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("恢复后继续回答。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("恢复后继续回答。")));
         List<AgentMessage> history = List.of(
                 AgentMessage.user("第一步问题"),
                 AgentMessage.assistant("我需要调用工具"),
@@ -277,7 +292,7 @@ class DefaultReActAgentTest {
         assertThat(result.trace().get(4).content()).isEqualTo("恢复后继续回答。");
 
         ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
-        verify(chatModel).call(captor.capture());
+        verify(modelRouter).call(captor.capture(), any());
         List<org.springframework.ai.chat.messages.Message> messages = captor.getValue().getInstructions();
         assertThat(messages).hasSize(5); // system + 历史 3 条（USER/ASSISTANT/TOOL）+ 本次 USER
         assertThat(messages.get(1)).isInstanceOf(org.springframework.ai.chat.messages.UserMessage.class);
@@ -288,7 +303,7 @@ class DefaultReActAgentTest {
 
     @Test
     void exposesTaskIdWhenContextCarriesIt() {
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("完成。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("完成。")));
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-123"), "你好");
         assertThat(result.taskId()).isEqualTo("task-123");
     }
@@ -298,14 +313,14 @@ class DefaultReActAgentTest {
         MockScriptEngine engine = mock(MockScriptEngine.class);
         when(engine.generate(any(Prompt.class))).thenReturn(response("Mock 回答。"));
         agent = agentWithMockEngine(engine);
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("真实模型回答。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("真实模型回答。")));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-1", Boolean.TRUE), "你好");
 
         assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
         assertThat(result.answer()).isEqualTo("Mock 回答。");
         verify(engine).generate(any(Prompt.class));
-        verify(chatModel, org.mockito.Mockito.never()).call(any(Prompt.class));
+        verify(modelRouter, org.mockito.Mockito.never()).call(any(Prompt.class), any());
     }
 
     @Test
@@ -313,20 +328,20 @@ class DefaultReActAgentTest {
         MockScriptEngine engine = mock(MockScriptEngine.class);
         when(engine.generate(any(Prompt.class))).thenReturn(response("Mock 回答。"));
         agent = agentWithMockEngine(engine);
-        when(chatModel.call(any(Prompt.class))).thenReturn(response("真实模型回答。"));
+        when(modelRouter.call(any(Prompt.class), any())).thenReturn(route(response("真实模型回答。")));
 
         AgentResult result = agent.run(AgentContext.create("s1", "u1", 5, "task-1", Boolean.FALSE), "你好");
 
         assertThat(result.answer()).isEqualTo("真实模型回答。");
         verify(engine, org.mockito.Mockito.never()).generate(any(Prompt.class));
-        verify(chatModel).call(any(Prompt.class));
+        verify(modelRouter).call(any(Prompt.class), any());
     }
 
     private DefaultReActAgent agentWithMockEngine(MockScriptEngine engine) {
         AgentProperties properties = new AgentProperties(8, Duration.ofSeconds(30), Duration.ofMinutes(30),
                 Duration.ofDays(180), Duration.ofMinutes(10), AgentProperties.Mock.DEFAULT);
         VectorProperties vectorProperties = new VectorProperties("memory", "default", 5, 0.15, 600, 50, null);
-        return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(),
+        return new DefaultReActAgent(chatModel, OpenAiChatOptions.builder().build(), modelRouter,
                 new ToolRegistry(List.of(new ServerTimeTool())), memoryStore, vectorStore,
                 TestResilience.defaultResilience(), properties, vectorProperties, engine);
     }
