@@ -46,7 +46,7 @@ class ModelRouterTest {
         modelB = mock(ChatModel.class);
         defaultModel = mock(ChatModel.class);
         Map<String, RouteConfig.ModelPlatform> platforms = new LinkedHashMap<>();
-        platforms.put("openai", new RouteConfig.ModelPlatform("openai", "http://localhost:1", "sk-test"));
+        platforms.put("openai", new RouteConfig.ModelPlatform("openai", "http://localhost:1", "sk-test", "/v1/chat/completions"));
         Map<String, List<String>> routes = new LinkedHashMap<>();
         routes.put(RouteConfig.DEFAULT_ROUTE, List.of("openai/gpt-4o-mini", "openai/gpt-4o"));
         config = new RouteConfig(true, 5, platforms, routes);

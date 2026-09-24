@@ -76,7 +76,7 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
                 while (rs.next()) {
                     String name = rs.getString("platform_name");
                     platforms.put(name, new RouteConfig.ModelPlatform(
-                            name, rs.getString("base_url"), rs.getString("api_key")));
+                            name, rs.getString("base_url"), rs.getString("api_key"), null));
                 }
             }
             Map<String, List<String>> routes = new LinkedHashMap<>();

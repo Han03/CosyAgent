@@ -28,7 +28,14 @@ public record ModelRoutingProperties(
         @NestedConfigurationProperty Pg pg,
         @NestedConfigurationProperty Mysql mysql) {
 
-    public record Platform(String baseUrl, String apiKey) {
+    /**
+     * 平台注册项。
+     *
+     * @param completionsPath 对话补全端点路径：默认 {@code /v1/chat/completions}（Spring AI 约定）；
+     *                        无 /v1 结构的平台（智谱 /v4、火山 /v3 等）显式配置为 {@code /chat/completions}
+     */
+    public record Platform(String baseUrl, String apiKey,
+                           @DefaultValue("/v1/chat/completions") String completionsPath) {
     }
 
     public record Pg(

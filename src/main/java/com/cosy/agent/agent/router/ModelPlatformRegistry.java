@@ -58,6 +58,7 @@ public class ModelPlatformRegistry {
         OpenAiApi api = OpenAiApi.builder()
                 .baseUrl(platform.baseUrl())
                 .apiKey(platform.apiKey() == null ? "" : platform.apiKey())
+                .completionsPath(platform.completionsPath())
                 .build();
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(model)

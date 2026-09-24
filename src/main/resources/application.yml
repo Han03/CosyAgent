@@ -69,27 +69,30 @@ cosy:
       max-candidates: ${COSY_MODEL_ROUTING_MAX_CANDIDATES:5}   # 单链候选上限
       store: ${COSY_MODEL_ROUTING_STORE:memory}                # memory | pg | mysql
       platforms:
-        aliyun:                       # 阿里云百炼（OpenAI 兼容）
+        aliyun:                       # 阿里云百炼（OpenAI 兼容；端点 {base}/v1/chat/completions）
           base-url: ${COSY_ALIYUN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
           api-key: ${COSY_ALIYUN_API_KEY:}
-        zhipu:                        # 智谱开放平台
+          completions-path: ${COSY_ALIYUN_COMPLETIONS_PATH:/v1/chat/completions}
+        zhipu:                        # 智谱开放平台（端点 {base}/chat/completions，无 /v1）
           base-url: ${COSY_ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
           api-key: ${COSY_ZHIPU_API_KEY:}
-        volcengine:                   # 火山方舟（Ark，OpenAI 兼容）
+          completions-path: ${COSY_ZHIPU_COMPLETIONS_PATH:/chat/completions}
+        volcengine:                   # 火山方舟（端点 {base}/chat/completions，无 /v1）
           base-url: ${COSY_VOLCENGINE_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
           api-key: ${COSY_VOLCENGINE_API_KEY:}
-        openrouter:                   # OpenRouter（聚合平台）
+          completions-path: ${COSY_VOLCENGINE_COMPLETIONS_PATH:/chat/completions}
+        openrouter:                   # OpenRouter（端点 {base}/v1/chat/completions）
           base-url: ${COSY_OPENROUTER_BASE_URL:https://openrouter.ai/api}
           api-key: ${COSY_OPENROUTER_API_KEY:}
+          completions-path: ${COSY_OPENROUTER_COMPLETIONS_PATH:/v1/chat/completions}
       routes:
         default:                      # auto 模式默认链（降级顺序）
-          # 注：Spring AI 固定拼 /v1/chat/completions；zhipu(/v4)/volcengine(/v3) 端点无 /v1 结构，
-          # 且 4xx 不降级，故置于链尾避免阻塞（aliyun/openrouter 为 {base}/v1 兼容端点，优先）。
+          - zhipu/glm-4-flash
           - aliyun/qwen-max
           - openrouter/stealth/ox-alpha
-          - zhipu/glm-4-flash
           - volcengine/doubao-seed-2-1-pro-260628
         reasoning:
+          - zhipu/glm-4-flash
           - aliyun/qwen-max
           - openrouter/stealth/ox-alpha
       pg:

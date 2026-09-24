@@ -22,8 +22,16 @@ public record RouteConfig(
         Map<String, ModelPlatform> platforms,
         Map<String, List<String>> routes) {
 
+    /** 对话补全端点路径默认值（Spring AI OpenAiApi 约定） */
+    public static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
+
     /** 平台注册项（name 为 Map key 冗余保留，便于序列化/校验） */
-    public record ModelPlatform(String name, String baseUrl, String apiKey) {
+    public record ModelPlatform(String name, String baseUrl, String apiKey, String completionsPath) {
+
+        public ModelPlatform {
+            completionsPath = (completionsPath == null || completionsPath.isBlank())
+                    ? DEFAULT_COMPLETIONS_PATH : completionsPath;
+        }
     }
 
     /** 默认路由类型（auto 模式使用） */
@@ -33,7 +41,7 @@ public record RouteConfig(
         Map<String, ModelPlatform> platforms = new LinkedHashMap<>();
         if (p.platforms() != null) {
             p.platforms().forEach((name, pf) -> platforms.put(name,
-                    new ModelPlatform(name, pf.baseUrl(), pf.apiKey())));
+                    new ModelPlatform(name, pf.baseUrl(), pf.apiKey(), pf.completionsPath())));
         }
         return new RouteConfig(p.enabled(), p.maxCandidates(),
                 platforms, p.routes() == null ? Map.of() : p.routes());

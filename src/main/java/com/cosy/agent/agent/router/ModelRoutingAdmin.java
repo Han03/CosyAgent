@@ -29,6 +29,7 @@ public class ModelRoutingAdmin {
         Map<String, Object> platforms = new LinkedHashMap<>();
         cfg.platforms().forEach((name, pf) -> platforms.put(name, Map.of(
                 "baseUrl", pf.baseUrl(),
+                "completionsPath", pf.completionsPath(),
                 "apiKeyConfigured", pf.apiKey() != null && !pf.apiKey().isBlank(),
                 "maskedApiKey", mask(pf.apiKey()))));
         return Map.of(
@@ -48,7 +49,7 @@ public class ModelRoutingAdmin {
                 String apiKey = (pf.apiKey() == null || pf.apiKey().isBlank())
                         ? (existing != null ? existing.apiKey() : null)
                         : pf.apiKey();
-                platforms.put(name, new RouteConfig.ModelPlatform(name, pf.baseUrl(), apiKey));
+                platforms.put(name, new RouteConfig.ModelPlatform(name, pf.baseUrl(), apiKey, pf.completionsPath()));
             });
         } else {
             platforms.putAll(current.platforms());
@@ -90,7 +91,7 @@ public class ModelRoutingAdmin {
             Map<String, PlatformDto> platforms,
             Map<String, List<String>> routes) {
 
-        public record PlatformDto(String baseUrl, String apiKey) {
+        public record PlatformDto(String baseUrl, String apiKey, String completionsPath) {
         }
     }
 }
