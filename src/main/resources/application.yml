@@ -69,14 +69,8 @@ cosy:
       max-candidates: ${COSY_MODEL_ROUTING_MAX_CANDIDATES:5}   # 单链候选上限
       store: ${COSY_MODEL_ROUTING_STORE:memory}                # memory | pg | mysql
       platforms:
-        openai:                       # 平台名（唯一标识）；回退 openai 即默认单模型等价
-          base-url: ${OPENAI_BASE_URL:https://api.openai.com}
-          api-key: ${OPENAI_API_KEY:sk-demo}
-        deepseek:
-          base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
-          api-key: ${DEEPSEEK_API_KEY:}
         aliyun:                       # 阿里云百炼（OpenAI 兼容）
-          base-url: ${COSY_ALIYUN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+          base-url: ${COSY_ALIYUN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
           api-key: ${COSY_ALIYUN_API_KEY:}
         zhipu:                        # 智谱开放平台
           base-url: ${COSY_ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
@@ -85,18 +79,18 @@ cosy:
           base-url: ${COSY_VOLCENGINE_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
           api-key: ${COSY_VOLCENGINE_API_KEY:}
         openrouter:                   # OpenRouter（聚合平台）
-          base-url: ${COSY_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+          base-url: ${COSY_OPENROUTER_BASE_URL:https://openrouter.ai/api}
           api-key: ${COSY_OPENROUTER_API_KEY:}
       routes:
-        default:                      # auto 模式默认链（降级顺序：CosyStudio 启用平台）
+        default:                      # auto 模式默认链（降级顺序）
+          # 注：Spring AI 固定拼 /v1/chat/completions；zhipu(/v4)/volcengine(/v3) 端点无 /v1 结构，
+          # 且 4xx 不降级，故置于链尾避免阻塞（aliyun/openrouter 为 {base}/v1 兼容端点，优先）。
           - aliyun/qwen-max
-          - zhipu/glm-4-flash
           - openrouter/stealth/ox-alpha
+          - zhipu/glm-4-flash
           - volcengine/doubao-seed-2-1-pro-260628
-          - deepseek/deepseek-chat
         reasoning:
           - aliyun/qwen-max
-          - zhipu/glm-4-flash
           - openrouter/stealth/ox-alpha
       pg:
         # store=pg 时生效（原生 JDBC，与 task store 同库同源）
