@@ -1,6 +1,9 @@
 spring:
   application:
     name: cosy-agent
+  profiles:
+    # 本地默认启用 local：加载 application-local.yml（.gitignore 排除，仅存本机密钥，不入库）
+    default: ${COSY_SPRING_PROFILES_DEFAULT:local}
   ai:
     openai:
       # OpenAI 兼容接口（可切换 DeepSeek / Qwen 等，仅改 base-url 与 model）
@@ -72,13 +75,29 @@ cosy:
         deepseek:
           base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
           api-key: ${DEEPSEEK_API_KEY:}
+        aliyun:                       # 阿里云百炼（OpenAI 兼容）
+          base-url: ${COSY_ALIYUN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api-key: ${COSY_ALIYUN_API_KEY:}
+        zhipu:                        # 智谱开放平台
+          base-url: ${COSY_ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+          api-key: ${COSY_ZHIPU_API_KEY:}
+        volcengine:                   # 火山方舟（Ark，OpenAI 兼容）
+          base-url: ${COSY_VOLCENGINE_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+          api-key: ${COSY_VOLCENGINE_API_KEY:}
+        openrouter:                   # OpenRouter（聚合平台）
+          base-url: ${COSY_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+          api-key: ${COSY_OPENROUTER_API_KEY:}
       routes:
-        default:                      # auto 模式默认链（降级顺序）
-          - openai/gpt-4o-mini
+        default:                      # auto 模式默认链（降级顺序：CosyStudio 启用平台）
+          - aliyun/qwen-max
+          - zhipu/glm-4-flash
+          - openrouter/stealth/ox-alpha
+          - volcengine/doubao-seed-2-1-pro-260628
           - deepseek/deepseek-chat
         reasoning:
-          - openai/gpt-4o
-          - deepseek/deepseek-reasoner
+          - aliyun/qwen-max
+          - zhipu/glm-4-flash
+          - openrouter/stealth/ox-alpha
       pg:
         # store=pg 时生效（原生 JDBC，与 task store 同库同源）
         url: ${COSY_MODEL_ROUTING_PG_URL:jdbc:postgresql://localhost:5432/cosy}
