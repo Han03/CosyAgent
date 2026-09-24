@@ -172,11 +172,17 @@ public class DefaultReActAgent implements ReActAgent {
                 break;
             }
 
-            trace.add(AgentMessage.assistant(assistant.getText() == null ? "" : assistant.getText()));
+            // 行动前的思考：该轮模型在工具调用前的推理文本透出（无文本则不发）
+            String thought = assistant.getText();
+            if (thought != null && !thought.isBlank()) {
+                emit(listener, AgentStreamEvent.reasoning(iterations, thought));
+            }
+            trace.add(AgentMessage.assistant(thought == null ? "" : thought));
             messages.add(assistant);
 
             for (AssistantMessage.ToolCall toolCall : toolCalls) {
                 emit(listener, AgentStreamEvent.tool(toolCall.id(), toolCall.name(), toolCall.arguments(), iterations));
+                long startNs = System.nanoTime();
                 AgentTool tool = toolRegistry.find(toolCall.name()).orElse(null);
                 Object result;
                 if (tool == null) {
@@ -192,7 +198,8 @@ public class DefaultReActAgent implements ReActAgent {
                     }
                 }
                 String resultJson = toJson(result);
-                emit(listener, AgentStreamEvent.toolResult(toolCall.id(), toolCall.name(), resultJson));
+                long durationMs = (System.nanoTime() - startNs) / 1_000_000L;
+                emit(listener, AgentStreamEvent.toolResult(toolCall.id(), toolCall.name(), resultJson, durationMs));
                 trace.add(AgentMessage.tool(toolCall.id(), toolCall.name(), toolCall.arguments(), resultJson));
                 messages.add(ToolResponseMessage.builder()
                         .responses(List.of(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(), resultJson)))

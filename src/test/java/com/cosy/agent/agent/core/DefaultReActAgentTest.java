@@ -345,4 +345,27 @@ class DefaultReActAgentTest {
                 new ToolRegistry(List.of(new ServerTimeTool())), memoryStore, vectorStore,
                 TestResilience.defaultResilience(), properties, vectorProperties, engine);
     }
+
+
+    @Test
+    void emitsReasoningAndToolResultDuration() {
+        when(modelRouter.call(any(Prompt.class), any()))
+                .thenReturn(route(new ChatResponse(List.of(new Generation(toolCallMessage("需要查询当前时间。", "get_server_time", "{}"))))),
+                        route(response("当前时间已获取。")));
+
+        List<AgentStreamEvent> events = new java.util.ArrayList<>();
+        AgentResult result = agent.run(AgentContext.create("s1", "u1", 5), "现在几点？", List.of(), events::add);
+
+        assertThat(result.state()).isEqualTo(AgentState.COMPLETED);
+        // 完整事件序列：thinking → reasoning → tool → toolResult → thinking → answer
+        assertThat(events.stream().map(AgentStreamEvent::type).toList())
+                .containsSubsequence("thinking", "reasoning", "tool", "toolResult", "thinking", "answer");
+        // reasoning 携带该轮思考文本
+        AgentStreamEvent reasoning = events.stream().filter(e -> e.type().equals("reasoning")).findFirst().orElseThrow();
+        assertThat(reasoning.content()).isEqualTo("需要查询当前时间。");
+        // toolResult 携带非负耗时
+        AgentStreamEvent toolResult = events.stream().filter(e -> e.type().equals("toolResult")).findFirst().orElseThrow();
+        assertThat(toolResult.durationMs()).isNotNull();
+        assertThat(toolResult.durationMs()).isGreaterThanOrEqualTo(0L);
+    }
 }
