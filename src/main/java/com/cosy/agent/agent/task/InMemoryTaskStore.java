@@ -6,12 +6,14 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * 内存任务存储（默认实现，无外部依赖）：进程内保存任务主记录与轨迹，
@@ -73,6 +75,25 @@ public class InMemoryTaskStore implements TaskStore {
         return tasks.values().stream()
                 .map(TaskDetail::task)
                 .filter(t -> t.sessionId().equals(sessionId))
+                .sorted((a, b) -> b.updatedAt().compareTo(a.updatedAt()))
+                .limit(Math.max(1, limit))
+                .toList();
+    }
+
+    @Override
+    public List<SessionSummary> findSessions(int limit) {
+        return tasks.values().stream()
+                .map(TaskDetail::task)
+                .collect(Collectors.groupingBy(AgentTask::sessionId))
+                .values().stream()
+                .map(group -> {
+                    AgentTask earliest = group.stream()
+                            .min(Comparator.comparing(AgentTask::createdAt)).orElseThrow();
+                    AgentTask latest = group.stream()
+                            .max(Comparator.comparing(AgentTask::updatedAt)).orElseThrow();
+                    return new SessionSummary(latest.sessionId(), earliest.input(),
+                            latest.state(), latest.updatedAt());
+                })
                 .sorted((a, b) -> b.updatedAt().compareTo(a.updatedAt()))
                 .limit(Math.max(1, limit))
                 .toList();

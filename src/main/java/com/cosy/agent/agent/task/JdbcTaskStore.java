@@ -255,6 +255,37 @@ public class JdbcTaskStore implements TaskStore, DisposableBean {
         });
     }
 
+    @Override
+    public List<SessionSummary> findSessions(int limit) {
+        return resilience.execute(ResilienceTarget.TASK, () -> {
+            try (Connection conn = open();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         SELECT t.session_id,
+                                (SELECT t2.input FROM agent_task t2
+                                  WHERE t2.session_id = t.session_id
+                                  ORDER BY t2.created_at ASC LIMIT 1) AS title,
+                                t.state, t.updated_at
+                         FROM agent_task t
+                         WHERE t.updated_at = (SELECT MAX(t3.updated_at) FROM agent_task t3
+                                                WHERE t3.session_id = t.session_id)
+                         ORDER BY t.updated_at DESC LIMIT ?""")) {
+                ps.setInt(1, Math.max(1, limit));
+                List<SessionSummary> list = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        list.add(new SessionSummary(
+                                rs.getString("session_id"),
+                                rs.getString("title"),
+                                AgentState.valueOf(rs.getString("state")),
+                                rs.getTimestamp("updated_at").toInstant()));
+                    }
+                }
+                return list;
+            } catch (SQLException e) {
+                throw new IllegalStateException("查询会话列表失败: " + e.getMessage(), e);
+            }
+        });
+    }
     private AgentTask mapTask(ResultSet rs) throws SQLException {
         return new AgentTask(
                 rs.getString("task_id"),

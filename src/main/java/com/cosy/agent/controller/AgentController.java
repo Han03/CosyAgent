@@ -66,6 +66,12 @@ public class AgentController {
         return Result.ok(taskStore.findBySession(sessionId, limit));
     }
 
+    /** 会话列表（会话 = sessionId 分组，title = 首条消息；更新时间倒序） */
+    @GetMapping("/sessions")
+    public Result<List<TaskStore.SessionSummary>> sessions(@RequestParam(defaultValue = "20") int limit) {
+        return Result.ok(taskStore.findSessions(Math.max(1, limit)));
+    }
+
     /** 断点恢复：以历史任务轨迹为上下文继续执行（新任务，Step 6） */
     @PostMapping("/tasks/{taskId}/resume")
     public Result<AgentResult> resume(@PathVariable String taskId, @Valid @RequestBody ResumeRequest request,
@@ -101,7 +107,7 @@ public class AgentController {
     }
 
     public record ChatRequest(
-            @NotBlank(message = "sessionId 不能为空") String sessionId,
+            String sessionId,
             @NotBlank(message = "message 不能为空") String message) {
     }
 

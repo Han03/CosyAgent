@@ -3,6 +3,7 @@ package com.cosy.agent.agent.task;
 import com.cosy.agent.agent.core.AgentMessage;
 import com.cosy.agent.agent.core.AgentState;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -31,6 +32,16 @@ public interface TaskStore {
 
     /** 按会话查询任务列表（更新时间倒序，limit 上限） */
     List<AgentTask> findBySession(String sessionId, int limit);
+
+    /**
+     * 会话列表（会话 = 同一 sessionId 的任务分组；title = 该会话最早任务输入，即首条消息；
+     * state/updatedAt 取该会话最新任务；整体按更新时间倒序）。
+     */
+    List<SessionSummary> findSessions(int limit);
+
+    /** 会话摘要（客户端会话列表渲染用） */
+    record SessionSummary(String sessionId, String title, AgentState state, Instant updatedAt) {
+    }
 
     /** 任务主记录 + 轨迹明细 */
     record TaskDetail(AgentTask task, List<AgentMessage> trace) {
