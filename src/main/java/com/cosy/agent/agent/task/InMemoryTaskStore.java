@@ -81,6 +81,11 @@ public class InMemoryTaskStore implements TaskStore {
     }
 
     @Override
+    public void deleteSession(String sessionId) {
+        tasks.entrySet().removeIf(e -> e.getValue().task().sessionId().equals(sessionId));
+    }
+
+    @Override
     public List<SessionSummary> findSessions(int limit) {
         return tasks.values().stream()
                 .map(TaskDetail::task)

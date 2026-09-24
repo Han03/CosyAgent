@@ -256,6 +256,27 @@ public class JdbcTaskStore implements TaskStore, DisposableBean {
     }
 
     @Override
+    public void deleteSession(String sessionId) {
+        resilience.execute(ResilienceTarget.TASK, () -> {
+            try (Connection conn = open()) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM agent_trace WHERE task_id IN (SELECT task_id FROM agent_task WHERE session_id = ?)")) {
+                    ps.setString(1, sessionId);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM agent_task WHERE session_id = ?")) {
+                    ps.setString(1, sessionId);
+                    ps.executeUpdate();
+                }
+            } catch (SQLException e) {
+                throw new IllegalStateException("删除会话失败: " + e.getMessage(), e);
+            }
+            return null;
+        });
+    }
+
+    @Override
     public List<SessionSummary> findSessions(int limit) {
         return resilience.execute(ResilienceTarget.TASK, () -> {
             try (Connection conn = open();

@@ -39,6 +39,23 @@ public interface TaskStore {
      */
     List<SessionSummary> findSessions(int limit);
 
+    /** 删除会话：移除该会话全部任务与轨迹（含审计）；会话不存在时静默返回 */
+    void deleteSession(String sessionId);
+
+    /**
+     * 会话全量消息（进入会话恢复用）：按消息时间戳升序合并该会话全部任务轨迹。
+     * 默认实现基于 findBySession + findById 组装；存储实现可覆写为单次 SQL。
+     */
+    default List<AgentMessage> findMessages(String sessionId) {
+        return findBySession(sessionId, 100_000).stream()
+                .flatMap(t -> findById(t.taskId()).map(TaskDetail::trace)
+                        .orElse(List.of()).stream())
+                .sorted(java.util.Comparator.comparing(
+                        AgentMessage::timestamp,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+    }
+
     /** 会话摘要（客户端会话列表渲染用） */
     record SessionSummary(String sessionId, String title, AgentState state, Instant updatedAt) {
     }

@@ -1,6 +1,9 @@
 package com.cosy.agent.controller;
 
+import com.cosy.agent.agent.core.AgentMessage;
 import com.cosy.agent.agent.core.AgentResult;
+import com.cosy.agent.agent.memory.MemoryLevel;
+import com.cosy.agent.agent.memory.MemoryStore;
 import com.cosy.agent.agent.task.AgentTask;
 import com.cosy.agent.agent.task.TaskStore;
 import com.cosy.agent.agent.tool.ToolRegistry;
@@ -8,6 +11,7 @@ import com.cosy.agent.common.api.Result;
 import com.cosy.agent.service.AgentOrchestrator;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,11 +38,14 @@ public class AgentController {
     private final AgentOrchestrator orchestrator;
     private final ToolRegistry toolRegistry;
     private final TaskStore taskStore;
+    private final MemoryStore memoryStore;
 
-    public AgentController(AgentOrchestrator orchestrator, ToolRegistry toolRegistry, TaskStore taskStore) {
+    public AgentController(AgentOrchestrator orchestrator, ToolRegistry toolRegistry, TaskStore taskStore,
+                           MemoryStore memoryStore) {
         this.orchestrator = orchestrator;
         this.toolRegistry = toolRegistry;
         this.taskStore = taskStore;
+        this.memoryStore = memoryStore;
     }
 
     /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID） */
@@ -70,6 +77,21 @@ public class AgentController {
     @GetMapping("/sessions")
     public Result<List<TaskStore.SessionSummary>> sessions(@RequestParam(defaultValue = "20") int limit) {
         return Result.ok(taskStore.findSessions(Math.max(1, limit)));
+    }
+
+    /** 会话全量消息（进入会话恢复历史用）：按消息时间戳升序合并全部任务轨迹 */
+    @GetMapping("/sessions/{sessionId}/messages")
+    public Result<List<AgentMessage>> sessionMessages(@PathVariable String sessionId) {
+        return Result.ok(taskStore.findMessages(sessionId));
+    }
+
+    /** 删除会话：移除全部任务与轨迹，并联动清理 Redis 记忆（work/session 两级） */
+    @DeleteMapping("/sessions/{sessionId}")
+    public Result<Boolean> deleteSession(@PathVariable String sessionId) {
+        taskStore.deleteSession(sessionId);
+        memoryStore.deleteNamespace(MemoryLevel.WORKING, sessionId);
+        memoryStore.deleteNamespace(MemoryLevel.SESSION, sessionId);
+        return Result.ok(Boolean.TRUE);
     }
 
     /** 断点恢复：以历史任务轨迹为上下文继续执行（新任务，Step 6） */

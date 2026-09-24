@@ -17,6 +17,9 @@ public interface MemoryStore {
 
     void delete(MemoryLevel level, String namespace, String key);
 
+    /** 删除整个命名空间（会话删除联动清理：cosy:work|session:{namespace}:*） */
+    void deleteNamespace(MemoryLevel level, String namespace);
+
     List<MemoryRecord> list(MemoryLevel level, String namespace);
 
     /** 按内容检索（Step 3 关键词过滤，Step 4 升级为向量化语义检索） */

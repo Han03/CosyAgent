@@ -59,6 +59,17 @@ public class RedisMemoryStore implements MemoryStore {
     }
 
     @Override
+    public void deleteNamespace(MemoryLevel level, String namespace) {
+        resilience.execute(ResilienceTarget.MEMORY, () -> {
+            Set<String> keys = redis.keys(keyPrefix(level, namespace) + "*");
+            if (!keys.isEmpty()) {
+                redis.delete(keys);
+            }
+            return null;
+        });
+    }
+
+    @Override
     public List<MemoryRecord> list(MemoryLevel level, String namespace) {
         return resilience.execute(ResilienceTarget.MEMORY, () -> {
             String prefix = keyPrefix(level, namespace);
