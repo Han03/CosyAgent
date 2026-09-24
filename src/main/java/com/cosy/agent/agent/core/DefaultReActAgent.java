@@ -110,6 +110,12 @@ public class DefaultReActAgent implements ReActAgent {
 
     @Override
     public AgentResult run(AgentContext context, String userInput, List<AgentMessage> history) {
+        return run(context, userInput, history, null);
+    }
+
+    @Override
+    public AgentResult run(AgentContext context, String userInput, List<AgentMessage> history,
+                           AgentEventListener listener) {
         long start = System.currentTimeMillis();
 
         List<Message> messages = new ArrayList<>();
@@ -134,6 +140,7 @@ public class DefaultReActAgent implements ReActAgent {
 
         for (int i = 0; i < context.maxIterations(); i++) {
             iterations++;
+            emit(listener, AgentStreamEvent.thinking(iterations));
             boolean useMock = isMockActive(context);
             ChatResponse response;
             try {
@@ -159,6 +166,7 @@ public class DefaultReActAgent implements ReActAgent {
 
             if (toolCalls == null || toolCalls.isEmpty()) {
                 answer = assistant.getText();
+                emit(listener, AgentStreamEvent.answer(answer));
                 trace.add(AgentMessage.assistant(answer));
                 state = AgentState.COMPLETED;
                 break;
@@ -168,6 +176,7 @@ public class DefaultReActAgent implements ReActAgent {
             messages.add(assistant);
 
             for (AssistantMessage.ToolCall toolCall : toolCalls) {
+                emit(listener, AgentStreamEvent.tool(toolCall.id(), toolCall.name(), toolCall.arguments(), iterations));
                 AgentTool tool = toolRegistry.find(toolCall.name()).orElse(null);
                 Object result;
                 if (tool == null) {
@@ -183,6 +192,7 @@ public class DefaultReActAgent implements ReActAgent {
                     }
                 }
                 String resultJson = toJson(result);
+                emit(listener, AgentStreamEvent.toolResult(toolCall.id(), toolCall.name(), resultJson));
                 trace.add(AgentMessage.tool(toolCall.id(), toolCall.name(), toolCall.arguments(), resultJson));
                 messages.add(ToolResponseMessage.builder()
                         .responses(List.of(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(), resultJson)))
@@ -201,6 +211,18 @@ public class DefaultReActAgent implements ReActAgent {
         String taskId = taskIdAttr != null ? taskIdAttr.toString() : null;
         return new AgentResult(context.sessionId(), answer, state, List.copyOf(trace), iterations,
                 System.currentTimeMillis() - start, errorMessage, taskId);
+    }
+
+    /** 事件回调：监听器为空或发送失败时静默跳过（不改变执行控制流，流断不阻断任务） */
+    private void emit(AgentEventListener listener, AgentStreamEvent event) {
+        if (listener == null) {
+            return;
+        }
+        try {
+            listener.onEvent(event);
+        } catch (Exception e) {
+            log.debug("流事件发送失败（客户端可能已断开）: type={}", event.type());
+        }
     }
 
     /** 组装系统提示：基础 ReAct 指令 + 会话记忆 + 长期记忆 + 知识库检索结果（RAG）。

@@ -1,8 +1,10 @@
 package com.cosy.agent.service;
 
 import com.cosy.agent.agent.core.AgentContext;
+import com.cosy.agent.agent.core.AgentEventListener;
 import com.cosy.agent.agent.core.AgentMessage;
 import com.cosy.agent.agent.core.AgentResult;
+import com.cosy.agent.agent.core.AgentStreamEvent;
 import com.cosy.agent.agent.core.AgentState;
 import com.cosy.agent.agent.core.ReActAgent;
 import com.cosy.agent.agent.task.AgentTask;
@@ -44,6 +46,15 @@ public class AgentOrchestrator {
 
     /** 会话惰性创建 + 模型选择透传（模型路由 v2：X-Cosy-Model 请求头） */
     public AgentResult chat(String sessionId, String userId, String input, Boolean mockOverride, String modelChoice) {
+        return streamChat(sessionId, userId, input, mockOverride, modelChoice, null);
+    }
+
+    /**
+     * 流式对话：与 {@link #chat} 相同任务流程，但执行过程实时回调
+     * thinking/tool/toolResult/answer 事件；任务终态落库后补发 done 事件。
+     */
+    public AgentResult streamChat(String sessionId, String userId, String input, Boolean mockOverride,
+                                  String modelChoice, AgentEventListener listener) {
         // 会话惰性创建：未提供 sessionId 时生成（客户端首条消息触发，任务 input 即会话名）
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = "s-" + java.util.UUID.randomUUID().toString().substring(0, 8);
@@ -52,8 +63,15 @@ public class AgentOrchestrator {
         markRunning(task);
         AgentContext context = AgentContext.create(
                 sessionId, userId, properties.maxIterations(), task.taskId(), mockOverride, modelChoice);
-        AgentResult result = reactAgent.run(context, input);
+        AgentResult result = reactAgent.run(context, input, List.of(), listener);
         finish(task.taskId(), result);
+        if (listener != null) {
+            try {
+                listener.onEvent(AgentStreamEvent.done(result));
+            } catch (Exception e) {
+                log.warn("done 事件发送失败（客户端可能已断开）: taskId={}", task.taskId());
+            }
+        }
         return result;
     }
 

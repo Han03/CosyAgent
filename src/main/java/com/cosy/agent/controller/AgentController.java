@@ -11,6 +11,8 @@ import com.cosy.agent.common.api.Result;
 import com.cosy.agent.service.AgentOrchestrator;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,7 +23,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -36,19 +40,24 @@ import java.util.Map;
 @RequestMapping("/api/agent")
 public class AgentController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentController.class);
+
     private final AgentOrchestrator orchestrator;
     private final ToolRegistry toolRegistry;
     private final TaskStore taskStore;
     private final MemoryStore memoryStore;
     private final com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin;
+    private final TaskExecutor taskExecutor;
 
     public AgentController(AgentOrchestrator orchestrator, ToolRegistry toolRegistry, TaskStore taskStore,
-                           MemoryStore memoryStore, com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin) {
+                           MemoryStore memoryStore, com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin,
+                           TaskExecutor taskExecutor) {
         this.orchestrator = orchestrator;
         this.toolRegistry = toolRegistry;
         this.taskStore = taskStore;
         this.memoryStore = memoryStore;
         this.modelRoutingAdmin = modelRoutingAdmin;
+        this.taskExecutor = taskExecutor;
     }
 
     /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID；
@@ -59,6 +68,49 @@ public class AgentController {
                                     @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader) {
         return Result.ok(orchestrator.chat(request.sessionId(), "anonymous", request.message(),
                 parseMock(mockHeader), parseModel(modelHeader)));
+    }
+
+    /**
+     * 流式对话入口（SSE，text/event-stream）：执行过程实时推送
+     * thinking / tool / toolResult / answer / done / error 事件，客户端逐事件渲染。
+     * 请求头与 /chat 完全一致（X-Cosy-Mock / X-Cosy-Model）。
+     */
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStream(@Valid @RequestBody ChatRequest request,
+                                 @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader,
+                                 @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader) {
+        SseEmitter emitter = new SseEmitter(0L); // 无服务端超时；客户端断开由发送失败感知
+        taskExecutor.execute(() -> {
+            try {
+                orchestrator.streamChat(request.sessionId(), "anonymous", request.message(),
+                        parseMock(mockHeader), parseModel(modelHeader),
+                        event -> {
+                            try {
+                                emitter.send(SseEmitter.event().name(event.type()).data(event));
+                            } catch (IOException e) {
+                                throw new StreamSendException(e);
+                            }
+                        });
+                emitter.complete();
+            } catch (Exception e) {
+                log.warn("流式对话执行失败: {}", e.getMessage());
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                            .data(Map.of("message", e.getMessage() == null ? "执行异常" : e.getMessage())));
+                } catch (Exception ignored) {
+                    // 客户端已断开，忽略
+                }
+                emitter.completeWithError(e);
+            }
+        });
+        return emitter;
+    }
+
+    /** 流发送失败（客户端断开）信号：中断编排线程，不吞异常 */
+    private static final class StreamSendException extends RuntimeException {
+        StreamSendException(Throwable cause) {
+            super(cause);
+        }
     }
 
     /** 任务详情（主记录 + 执行轨迹审计，Step 6） */

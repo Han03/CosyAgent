@@ -23,4 +23,13 @@ public interface ReActAgent {
      * 历史 USER/ASSISTANT/TOOL 消息作为模型上下文注入（系统提示之后、本次输入之前）。
      */
     AgentResult run(AgentContext context, String userInput, List<AgentMessage> history);
+
+    /**
+     * 执行一次任务并实时推送执行事件（SSE 流式：thinking/tool/toolResult/answer）。
+     * 默认实现忽略监听器（与同步行为一致）；流式实现重写以逐事件回调。
+     */
+    default AgentResult run(AgentContext context, String userInput, List<AgentMessage> history,
+                            AgentEventListener listener) {
+        return run(context, userInput, history);
+    }
 }
