@@ -34,6 +34,7 @@ public record AgentProperties(
      * @param seed        scripted 模式随机种子
      * @param maxTurns    mock 自身回合上限
      * @param probability 行为随机概率
+     * @param latency     模拟推理延迟（贴近真实模型耗时）
      */
     public record Mock(
             @DefaultValue("false") boolean enabled,
@@ -41,15 +42,32 @@ public record AgentProperties(
             @DefaultValue("time") String script,
             @DefaultValue("42") long seed,
             @DefaultValue("8") int maxTurns,
-            @NestedConfigurationProperty Probability probability) {
+            @NestedConfigurationProperty Probability probability,
+            @NestedConfigurationProperty Latency latency) {
 
-        public static final Mock DEFAULT = new Mock(false, "random", "time", 42, 8, new Probability(0.4, 0.1, 0.1, 0.05));
+        public static final Mock DEFAULT = new Mock(false, "random", "time", 42, 8,
+                new Probability(0.4, 0.1, 0.1, 0.05), Latency.DEFAULT);
 
         public record Probability(
                 @DefaultValue("0.4") double extraTurn,
                 @DefaultValue("0.1") double unknownTool,
                 @DefaultValue("0.1") double multiTool,
                 @DefaultValue("0.05") double error) {
+        }
+
+        /**
+         * 模拟推理延迟：每次模型调用前随机等待 [minMs, maxMs]，贴近真实 LLM 耗时。
+         * random 模式每次独立随机；scripted 模式种子派生（CI 可复现）。
+         * 上限约束：max-turns 8 × max-ms ≤ 20s < 客户端 receiveTimeout 30s < llm-timelimiter 60s。
+         */
+        public record Latency(
+                @DefaultValue("true") boolean enabled,
+                @DefaultValue("500") long minMs,
+                @DefaultValue("2500") long maxMs) {
+
+            public static final Latency DEFAULT = new Latency(true, 500, 2500);
+            /** 测试/CI 用：关闭延迟保证确定性 */
+            public static final Latency DISABLED = new Latency(false, 0, 0);
         }
     }
 }

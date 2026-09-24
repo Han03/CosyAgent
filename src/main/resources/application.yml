@@ -49,6 +49,10 @@ cosy:
       script: ${COSY_AGENT_MOCK_SCRIPT:time} # scripted 模式指定剧本 id
       seed: ${COSY_AGENT_MOCK_SEED:42}       # scripted 模式随机种子
       max-turns: ${COSY_AGENT_MOCK_MAX_TURNS:8}  # mock 自身回合上限
+      latency:
+        enabled: ${COSY_AGENT_MOCK_LATENCY_ENABLED:true}   # 模拟推理延迟开关（贴近真实模型耗时）
+        min-ms: ${COSY_AGENT_MOCK_LATENCY_MIN_MS:500}      # 单次模型调用最小延迟
+        max-ms: ${COSY_AGENT_MOCK_LATENCY_MAX_MS:2500}     # 最大延迟（8 轮 × 2.5s=20s < 客户端 30s 超时）
       probability:
         extra-turn: 0.4      # 追加一轮工具调用（模拟多考虑一轮）
         unknown-tool: 0.1    # 工具名替换为未注册名（未知工具自愈路径）

@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest(properties = {
         "cosy.agent.mock.enabled=true",
+        "cosy.agent.mock.latency.enabled=false",
         "cosy.agent.mock.mode=random",
         "cosy.agent.mock.probability.extra-turn=0",
         "cosy.agent.mock.probability.unknown-tool=0",

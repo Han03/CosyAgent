@@ -34,7 +34,7 @@ class MockScriptEngineTest {
     }
 
     private AgentProperties.Mock mock(String mode, String script, AgentProperties.Mock.Probability prob) {
-        return new AgentProperties.Mock(true, mode, script, 42, 8, prob);
+        return new AgentProperties.Mock(true, mode, script, 42, 8, prob, AgentProperties.Mock.Latency.DISABLED);
     }
 
     private AgentProperties.Mock.Probability prob(double extra, double unknown, double multi, double error) {

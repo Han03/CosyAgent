@@ -180,6 +180,51 @@ cosy:
 
 ---
 
+## 10. 推理延迟模拟（贴近真实模型耗时）
+
+### 10.1 动机
+
+Mock 引擎此前每次模型调用**即时返回**（毫秒级），与真实 LLM 推理耗时（数百 ms～数秒）差异过大：
+- 客户端体验失真：看不到"Agent 正在思考"的等待节奏；
+- 容错链路（超时/限流/舱壁）在 mock 下无法被真实地触发与观察。
+
+### 10.2 设计
+
+- **粒度**：按**单次模型调用**延迟（每轮 ReAct 迭代各一次），而非整次任务一次性延迟——与真实模型逐轮推理语义一致；
+- **随机区间**：`cosy.agent.mock.latency.{enabled,min-ms,max-ms}`，默认 `true / 500 / 2500`（典型 LLM 单轮耗时）；
+- **随机源统一**：复用 `MockRandomSource`——`random` 模式每次运行独立随机（用户消息哈希 ^ 运行时刻），`scripted` 模式由固定种子派生（CI 可复现同一延迟序列）；
+- **中断语义**：`Thread.sleep` 被上游容错（如 TimeLimiter 超时取消）中断时，恢复中断位并向上抛出，交由调用方终止，不吞中断。
+
+### 10.3 上限约束（防超时）
+
+| 环节 | 上限 | 与默认延迟关系 |
+| --- | --- | --- |
+| 单次调用延迟 | max-ms = 2500ms | — |
+| 单任务累计（max-turns 8 轮） | ≤ 20s | < 客户端 receiveTimeout 30s |
+| 服务端单次调用超时（llm-timelimiter） | 60s | ≫ 2500ms，无冲突 |
+
+### 10.4 配置
+
+```yaml
+cosy:
+  agent:
+    mock:
+      latency:
+        enabled: ${COSY_AGENT_MOCK_LATENCY_ENABLED:true}
+        min-ms:  ${COSY_AGENT_MOCK_LATENCY_MIN_MS:500}
+        max-ms:  ${COSY_AGENT_MOCK_LATENCY_MAX_MS:2500}
+```
+
+测试/CI 关闭方式：`cosy.agent.mock.latency.enabled=false`（单测与 MockE2e 已默认关闭，保持快速确定性）。
+
+### 10.5 验证
+
+- 单测：`MockScriptEngineTest` 全部以 `Latency.DISABLED` 构造（行为不变）；
+- 集成：`MockE2eIntegrationTest` 关闭延迟（CI 快），不改变剧本/随机语义；
+- 运行冒烟（28080 + `X-Cosy-Mock: true`）：单轮工具调用请求耗时 ≥ 500ms、多轮请求耗时随迭代数线性增长，且每次请求耗时在 [min,max] 区间内波动（随机性生效）。
+
+---
+
 ## 9. 风险与说明
 
 | 风险 | 应对 |

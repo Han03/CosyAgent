@@ -52,6 +52,7 @@ public class MockScriptEngine {
         AgentProperties.Mock.Probability prob = mock.probability() != null ? mock.probability()
                 : AgentProperties.Mock.DEFAULT.probability();
         MockRandomSource random = randomSource(prompt, mock);
+        maybeLatency(mock, random);
         MockScript script = selectScript(prompt, mock);
         int progress = countToolCallMessages(prompt);
 
@@ -82,6 +83,27 @@ public class MockScriptEngine {
             return toolCallResponse(List.of(pickAction(script, random)));
         }
         return finalAnswerResponse(List.of("任务已完成：{result}", "完成：{result}", "结果：{result}"), prompt, random);
+    }
+
+    /**
+     * 模拟推理延迟：开启时按随机源在 [minMs, maxMs] 取延迟并休眠。
+     * scripted 模式由固定种子派生（同一运行可复现）；random 模式随运行独立随机。
+     * 被上游容错取消（如 TimeLimiter 超时中断）时恢复中断位并向上抛出，交由调用方终止。
+     */
+    private void maybeLatency(AgentProperties.Mock mock, MockRandomSource random) {
+        AgentProperties.Mock.Latency latency = mock.latency() != null ? mock.latency()
+                : AgentProperties.Mock.DEFAULT.latency();
+        if (!latency.enabled() || latency.maxMs() <= 0) {
+            return;
+        }
+        long span = Math.max(0, latency.maxMs() - latency.minMs());
+        long delay = latency.minMs() + (span > 0 ? random.nextInt((int) Math.min(span, Integer.MAX_VALUE)) : 0);
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("模拟推理延迟被中断", e);
+        }
     }
 
     private MockRandomSource randomSource(Prompt prompt, AgentProperties.Mock mock) {
