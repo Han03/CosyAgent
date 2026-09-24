@@ -70,6 +70,10 @@ public class ModelPlatformRegistry {
         return org.springframework.ai.openai.OpenAiChatModel.builder()
                 .openAiApi(api)
                 .defaultOptions(options)
+                // 关闭 Spring AI 内部工具自动执行：模型返回的 toolCalls 原样透出，
+                // 由上层 ReAct 循环统一执行（未知工具自愈 / TOOL 容错 / 轨迹审计），
+                // 避免工具名被 LLM 改写（如中文描述）时在此层抛异常中断整次对话。
+                .toolExecutionEligibilityPredicate((chatOptions, chatResponse) -> false)
                 .build();
     }
 }
