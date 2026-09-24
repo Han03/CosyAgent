@@ -81,6 +81,23 @@ public class InMemoryTaskStore implements TaskStore {
     }
 
     @Override
+    public Optional<SessionSummary> findSession(String sessionId) {
+        var group = tasks.values().stream()
+                .map(TaskDetail::task)
+                .filter(t -> t.sessionId().equals(sessionId))
+                .toList();
+        if (group.isEmpty()) {
+            return Optional.empty();
+        }
+        AgentTask earliest = group.stream()
+                .min(Comparator.comparing(AgentTask::createdAt)).orElseThrow();
+        AgentTask latest = group.stream()
+                .max(Comparator.comparing(AgentTask::updatedAt)).orElseThrow();
+        return Optional.of(new SessionSummary(latest.sessionId(), earliest.input(),
+                latest.state(), latest.updatedAt()));
+    }
+
+    @Override
     public void deleteSession(String sessionId) {
         tasks.entrySet().removeIf(e -> e.getValue().task().sessionId().equals(sessionId));
     }

@@ -39,6 +39,9 @@ public interface TaskStore {
      */
     List<SessionSummary> findSessions(int limit);
 
+    /** 单会话摘要（客户端进入会话恢复标题用）；不存在返回 empty */
+    Optional<SessionSummary> findSession(String sessionId);
+
     /** 删除会话：移除该会话全部任务与轨迹（含审计）；会话不存在时静默返回 */
     void deleteSession(String sessionId);
 

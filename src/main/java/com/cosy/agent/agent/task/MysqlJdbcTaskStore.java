@@ -275,6 +275,37 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
     }
 
     @Override
+    public Optional<SessionSummary> findSession(String sessionId) {
+        return resilience.execute(ResilienceTarget.TASK, () -> {
+            try (Connection conn = open();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         SELECT t.session_id,
+                                (SELECT t2.input FROM agent_task t2
+                                  WHERE t2.session_id = t.session_id
+                                  ORDER BY t2.created_at ASC LIMIT 1) AS title,
+                                t.state, t.updated_at
+                         FROM agent_task t
+                         WHERE t.session_id = ?
+                           AND t.updated_at = (SELECT MAX(t3.updated_at) FROM agent_task t3
+                                                WHERE t3.session_id = t.session_id)""")) {
+                ps.setString(1, sessionId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.<SessionSummary>empty();
+                    }
+                    return Optional.of(new SessionSummary(
+                            rs.getString("session_id"),
+                            rs.getString("title"),
+                            AgentState.valueOf(rs.getString("state")),
+                            rs.getTimestamp("updated_at").toInstant()));
+                }
+            } catch (SQLException e) {
+                throw new IllegalStateException("查询会话摘要失败: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    @Override
     public void deleteSession(String sessionId) {
         resilience.execute(ResilienceTarget.TASK, () -> {
             try (Connection conn = open()) {

@@ -79,6 +79,14 @@ public class AgentController {
         return Result.ok(taskStore.findSessions(Math.max(1, limit)));
     }
 
+    /** 单会话摘要（客户端进入会话恢复标题用） */
+    @GetMapping("/sessions/{sessionId}")
+    public Result<TaskStore.SessionSummary> session(@PathVariable String sessionId) {
+        return Result.ok(taskStore.findSession(sessionId)
+                .orElseThrow(() -> new com.cosy.agent.common.exception.BizException(
+                        com.cosy.agent.common.enums.ErrorCode.SESSION_NOT_FOUND, sessionId)));
+    }
+
     /** 会话全量消息（进入会话恢复历史用）：按消息时间戳升序合并全部任务轨迹 */
     @GetMapping("/sessions/{sessionId}/messages")
     public Result<List<AgentMessage>> sessionMessages(@PathVariable String sessionId) {
