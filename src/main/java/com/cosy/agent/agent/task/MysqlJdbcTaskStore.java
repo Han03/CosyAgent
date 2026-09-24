@@ -75,8 +75,14 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
                         error_message TEXT,
                         created_at    TIMESTAMP DEFAULT now(),
                         updated_at    TIMESTAMP DEFAULT now(),
-                        finished_at   TIMESTAMP
+                        finished_at   TIMESTAMP,
+                        pinned        TINYINT(1) DEFAULT 0,
+                        title_override VARCHAR(256)
                     )""");
+            ensureColumn(conn, "pinned",
+                    "ALTER TABLE agent_task ADD COLUMN pinned TINYINT(1) DEFAULT 0");
+            ensureColumn(conn, "title_override",
+                    "ALTER TABLE agent_task ADD COLUMN title_override VARCHAR(256)");
             conn.createStatement().execute("""
                     CREATE TABLE IF NOT EXISTS agent_trace (
                         id            BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -280,10 +286,15 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
             try (Connection conn = open();
                  PreparedStatement ps = conn.prepareStatement("""
                          SELECT t.session_id,
-                                (SELECT t2.input FROM agent_task t2
-                                  WHERE t2.session_id = t.session_id
-                                  ORDER BY t2.created_at ASC LIMIT 1) AS title,
-                                t.state, t.updated_at
+                                COALESCE(
+                                  (SELECT t2.title_override FROM agent_task t2
+                                    WHERE t2.session_id = t.session_id
+                                      AND t2.title_override IS NOT NULL
+                                    ORDER BY t2.created_at ASC LIMIT 1),
+                                  (SELECT t2.input FROM agent_task t2
+                                    WHERE t2.session_id = t.session_id
+                                    ORDER BY t2.created_at ASC LIMIT 1)) AS title,
+                                t.state, t.updated_at, t.pinned
                          FROM agent_task t
                          WHERE t.session_id = ?
                            AND t.updated_at = (SELECT MAX(t3.updated_at) FROM agent_task t3
@@ -297,7 +308,8 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
                             rs.getString("session_id"),
                             rs.getString("title"),
                             AgentState.valueOf(rs.getString("state")),
-                            rs.getTimestamp("updated_at").toInstant()));
+                            rs.getTimestamp("updated_at").toInstant(),
+                            rs.getBoolean("pinned")));
                 }
             } catch (SQLException e) {
                 throw new IllegalStateException("查询会话摘要失败: " + e.getMessage(), e);
@@ -327,19 +339,56 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
     }
 
     @Override
+    public void pinSession(String sessionId, boolean pinned) {
+        resilience.execute(ResilienceTarget.TASK, () -> {
+            try (Connection conn = open();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "UPDATE agent_task SET pinned = ? WHERE session_id = ?")) {
+                ps.setBoolean(1, pinned);
+                ps.setString(2, sessionId);
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new IllegalStateException("置顶会话失败: " + e.getMessage(), e);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void renameSession(String sessionId, String title) {
+        resilience.execute(ResilienceTarget.TASK, () -> {
+            try (Connection conn = open();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "UPDATE agent_task SET title_override = ? WHERE session_id = ?")) {
+                ps.setString(1, title);
+                ps.setString(2, sessionId);
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new IllegalStateException("重命名会话失败: " + e.getMessage(), e);
+            }
+            return null;
+        });
+    }
+
+    @Override
     public List<SessionSummary> findSessions(int limit) {
         return resilience.execute(ResilienceTarget.TASK, () -> {
             try (Connection conn = open();
                  PreparedStatement ps = conn.prepareStatement("""
                          SELECT t.session_id,
-                                (SELECT t2.input FROM agent_task t2
-                                  WHERE t2.session_id = t.session_id
-                                  ORDER BY t2.created_at ASC LIMIT 1) AS title,
-                                t.state, t.updated_at
+                                COALESCE(
+                                  (SELECT t2.title_override FROM agent_task t2
+                                    WHERE t2.session_id = t.session_id
+                                      AND t2.title_override IS NOT NULL
+                                    ORDER BY t2.created_at ASC LIMIT 1),
+                                  (SELECT t2.input FROM agent_task t2
+                                    WHERE t2.session_id = t.session_id
+                                    ORDER BY t2.created_at ASC LIMIT 1)) AS title,
+                                t.state, t.updated_at, t.pinned
                          FROM agent_task t
                          WHERE t.updated_at = (SELECT MAX(t3.updated_at) FROM agent_task t3
                                                 WHERE t3.session_id = t.session_id)
-                         ORDER BY t.updated_at DESC LIMIT ?""")) {
+                         ORDER BY t.pinned DESC, t.updated_at DESC LIMIT ?""")) {
                 ps.setInt(1, Math.max(1, limit));
                 List<SessionSummary> list = new ArrayList<>();
                 try (ResultSet rs = ps.executeQuery()) {
@@ -348,7 +397,8 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
                                 rs.getString("session_id"),
                                 rs.getString("title"),
                                 AgentState.valueOf(rs.getString("state")),
-                                rs.getTimestamp("updated_at").toInstant()));
+                                rs.getTimestamp("updated_at").toInstant(),
+                                rs.getBoolean("pinned")));
                     }
                 }
                 return list;
@@ -357,6 +407,20 @@ public class MysqlJdbcTaskStore implements TaskStore, DisposableBean {
             }
         });
     }
+    private void ensureColumn(Connection conn, String column, String alterSql) throws SQLException {
+        try (PreparedStatement check = conn.prepareStatement(
+                "SELECT COUNT(*) FROM information_schema.columns " +
+                "WHERE table_schema = DATABASE() AND table_name = 'agent_task' AND column_name = ?")) {
+            check.setString(1, column);
+            try (ResultSet rs = check.executeQuery()) {
+                rs.next();
+                if (rs.getInt(1) == 0) {
+                    conn.createStatement().execute(alterSql);
+                }
+            }
+        }
+    }
+
     private AgentTask mapTask(ResultSet rs) throws SQLException {
         return new AgentTask(
                 rs.getString("task_id"),

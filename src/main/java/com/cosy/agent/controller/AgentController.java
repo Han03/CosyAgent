@@ -93,6 +93,22 @@ public class AgentController {
         return Result.ok(taskStore.findMessages(sessionId));
     }
 
+    /** 置顶/取消置顶会话 */
+    @PostMapping("/sessions/{sessionId}/pin")
+    public Result<Boolean> pinSession(@PathVariable String sessionId,
+                                      @Valid @RequestBody PinRequest request) {
+        taskStore.pinSession(sessionId, request.pinned());
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 重命名会话（title 覆盖首条消息标题） */
+    @PostMapping("/sessions/{sessionId}/rename")
+    public Result<Boolean> renameSession(@PathVariable String sessionId,
+                                         @Valid @RequestBody RenameRequest request) {
+        taskStore.renameSession(sessionId, request.title());
+        return Result.ok(Boolean.TRUE);
+    }
+
     /** 删除会话：移除全部任务与轨迹，并联动清理 Redis 记忆（work/session 两级） */
     @DeleteMapping("/sessions/{sessionId}")
     public Result<Boolean> deleteSession(@PathVariable String sessionId) {
@@ -143,5 +159,12 @@ public class AgentController {
 
     public record ResumeRequest(
             @NotBlank(message = "message 不能为空") String message) {
+    }
+
+    public record PinRequest(boolean pinned) {
+    }
+
+    public record RenameRequest(
+            @NotBlank(message = "title 不能为空") String title) {
     }
 }

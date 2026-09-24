@@ -59,8 +59,17 @@ public interface TaskStore {
                 .toList();
     }
 
-    /** 会话摘要（客户端会话列表渲染用） */
-    record SessionSummary(String sessionId, String title, AgentState state, Instant updatedAt) {
+    /** 会话摘要（客户端会话列表渲染用）；pinned=置顶标记（置顶会话排前） */
+    record SessionSummary(String sessionId, String title, AgentState state, Instant updatedAt,
+                          boolean pinned) {
+    }
+
+    /** 置顶/取消置顶会话（默认实现 no-op；持久化实现覆写） */
+    default void pinSession(String sessionId, boolean pinned) {
+    }
+
+    /** 重命名会话（title 覆盖首条消息标题；默认实现 no-op；持久化实现覆写） */
+    default void renameSession(String sessionId, String title) {
     }
 
     /** 任务主记录 + 轨迹明细 */

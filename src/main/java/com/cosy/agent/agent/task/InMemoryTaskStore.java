@@ -26,6 +26,8 @@ public class InMemoryTaskStore implements TaskStore {
     private static final AtomicLong SEQ = new AtomicLong();
 
     private final Map<String, TaskDetail> tasks = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> pinnedSessions = new ConcurrentHashMap<>();
+    private final Map<String, String> renamedSessions = new ConcurrentHashMap<>();
 
     @Override
     public AgentTask createTask(String sessionId, String userId, String input) {
@@ -93,13 +95,27 @@ public class InMemoryTaskStore implements TaskStore {
                 .min(Comparator.comparing(AgentTask::createdAt)).orElseThrow();
         AgentTask latest = group.stream()
                 .max(Comparator.comparing(AgentTask::updatedAt)).orElseThrow();
-        return Optional.of(new SessionSummary(latest.sessionId(), earliest.input(),
-                latest.state(), latest.updatedAt()));
+        return Optional.of(new SessionSummary(latest.sessionId(),
+                renamedSessions.getOrDefault(sessionId, earliest.input()),
+                latest.state(), latest.updatedAt(),
+                pinnedSessions.getOrDefault(sessionId, Boolean.FALSE)));
     }
 
     @Override
     public void deleteSession(String sessionId) {
         tasks.entrySet().removeIf(e -> e.getValue().task().sessionId().equals(sessionId));
+        pinnedSessions.remove(sessionId);
+        renamedSessions.remove(sessionId);
+    }
+
+    @Override
+    public void pinSession(String sessionId, boolean pinned) {
+        pinnedSessions.put(sessionId, pinned);
+    }
+
+    @Override
+    public void renameSession(String sessionId, String title) {
+        renamedSessions.put(sessionId, title);
     }
 
     @Override
@@ -113,10 +129,13 @@ public class InMemoryTaskStore implements TaskStore {
                             .min(Comparator.comparing(AgentTask::createdAt)).orElseThrow();
                     AgentTask latest = group.stream()
                             .max(Comparator.comparing(AgentTask::updatedAt)).orElseThrow();
-                    return new SessionSummary(latest.sessionId(), earliest.input(),
-                            latest.state(), latest.updatedAt());
+                    return new SessionSummary(latest.sessionId(),
+                            renamedSessions.getOrDefault(latest.sessionId(), earliest.input()),
+                            latest.state(), latest.updatedAt(),
+                            pinnedSessions.getOrDefault(latest.sessionId(), Boolean.FALSE));
                 })
-                .sorted((a, b) -> b.updatedAt().compareTo(a.updatedAt()))
+                .sorted(Comparator.comparing(SessionSummary::pinned).reversed()
+                        .thenComparing(Comparator.comparing(SessionSummary::updatedAt).reversed()))
                 .limit(Math.max(1, limit))
                 .toList();
     }
