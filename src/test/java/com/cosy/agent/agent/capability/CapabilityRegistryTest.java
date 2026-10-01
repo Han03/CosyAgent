@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -270,6 +271,35 @@ class CapabilityRegistryTest {
             assertThat(result.toString()).contains("合成完成"); // 降级到 B 成功
         } finally {
             failing.stop(0);
+        }
+    }
+
+    @Test
+    void syncPathTemplate_substitutesPathVariableAndDropsFromQuery() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicReference<String> seen = new AtomicReference<>();
+        server.createContext("/api/scripts/", exchange -> {
+            seen.set(exchange.getRequestURI().toString());
+            byte[] body = "{\"ok\":true,\"id\":5}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        server.start();
+        try {
+            Capability detail = new Capability("detail", "剧本详情（路径参数）", Map.of("id", "int"),
+                    "/api/scripts/{id}", "GET", true, "test");
+            registry.register(new CapabilityRegistry.RegisterRequest("app-a",
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "ap", "test", List.of(detail)));
+
+            Object result = registry.call("test_detail", Map.of("id", 5));
+            // 路径模板已替换且未残留 query：/api/scripts/5
+            assertThat(seen.get()).isEqualTo("/api/scripts/5");
+            assertThat(result.toString()).contains("\"ok\":true");
+        } finally {
+            server.stop(0);
         }
     }
 }

@@ -368,13 +368,26 @@ public class CapabilityRegistry {
         }
     }
 
-    /** sync：单次 HTTP 调用（外层 call() 已对每个候选套 ResilienceTarget.TOOL 容错） */
+    /** sync：单次 HTTP 调用（外层 call() 已对每个候选套 ResilienceTarget.TOOL 容错）。
+     * 支持 RESTful 路径模板：endpointPath 中含 {arg} 时从参数中取值替换（如
+     * /api/books/scripts/{id}），其余参数走 query（GET）或 JSON body（POST）。 */
     private Object invokeSync(CapabilityProvider provider, Capability capability, Map<String, Object> args) {
-        String url = provider.baseUrl().replaceAll("/+$", "") + capability.endpointPath();
+        Map<String, Object> params = args == null ? Map.of() : new LinkedHashMap<>(args);
+        String path = capability.endpointPath();
+        if (path.contains("{")) {
+            for (String k : params.keySet().toArray(new String[0])) {
+                String token = "{" + k + "}";
+                if (path.contains(token)) {
+                    path = path.replace(token, String.valueOf(params.get(k)));
+                    params.remove(k);
+                }
+            }
+        }
+        String url = provider.baseUrl().replaceAll("/+$", "") + path;
         boolean isGet = "GET".equalsIgnoreCase(capability.endpointMethod());
-        if (isGet && args != null && !args.isEmpty()) {
+        if (isGet && !params.isEmpty()) {
             StringBuilder q = new StringBuilder(url.contains("?") ? "&" : "?");
-            args.forEach((k, v) -> q.append(k).append('=').append(v));
+            params.forEach((k, v) -> q.append(k).append('=').append(v));
             url = url + q;
         }
         String body;
@@ -386,7 +399,7 @@ public class CapabilityRegistry {
             body = restClient.post().uri(url)
                     .header("X-Capability-Call-Token", provider.callToken())
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(args)
+                    .body(params)
                     .retrieve().body(String.class);
         }
         return body == null ? Map.of() : body;

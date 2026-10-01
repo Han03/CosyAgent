@@ -99,6 +99,7 @@ public class CapabilityController {
                 inst.put("appName", ac.provider().appName());
                 inst.put("baseUrl", ac.provider().baseUrl());
                 inst.put("mode", ac.provider().mode());
+                inst.put("endpointMode", ac.capability().endpointMode());
                 inst.put("status", ac.provider().status().name());
                 inst.put("retryable", ac.capability().retryable());
                 return inst;
