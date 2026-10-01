@@ -64,12 +64,23 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
                       app_name      VARCHAR(128) NOT NULL,
                       base_url      VARCHAR(512) NOT NULL,
                       auth_type     VARCHAR(32)  NOT NULL DEFAULT 'shared-secret',
+                      auth_model    VARCHAR(16)  NOT NULL DEFAULT 'none',
+                      auth_header_name VARCHAR(64),
+                      auth_param_name  VARCHAR(64),
+                      auth_value_encrypted VARCHAR(512),
+                      source        VARCHAR(16)  NOT NULL DEFAULT 'external',
                       call_token    VARCHAR(128),
                       mode          VARCHAR(8)   NOT NULL,
                       status        VARCHAR(16)  NOT NULL DEFAULT 'UP',
                       last_beat_at  DATETIME(3)  NULL,
                       created_at    DATETIME(3)  NOT NULL
                     ) DEFAULT CHARSET=utf8mb4""");
+            // 旧库升级：补齐第三方认证/来源列（MySQL 8 不支持 ADD COLUMN IF NOT EXISTS，按 information_schema 幂等判断）
+            addColumnIfAbsent(st, "auth_model", "auth_model VARCHAR(16) NOT NULL DEFAULT 'none'");
+            addColumnIfAbsent(st, "auth_header_name", "auth_header_name VARCHAR(64)");
+            addColumnIfAbsent(st, "auth_param_name", "auth_param_name VARCHAR(64)");
+            addColumnIfAbsent(st, "auth_value_encrypted", "auth_value_encrypted VARCHAR(512)");
+            addColumnIfAbsent(st, "source", "source VARCHAR(16) NOT NULL DEFAULT 'external'");
             st.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS capability (
                       capability_name   VARCHAR(128) NOT NULL,
@@ -87,27 +98,48 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
         }
     }
 
+    /** 幂等加列：MySQL 8 无 ADD COLUMN IF NOT EXISTS，按 information_schema 判断后执行 */
+    private void addColumnIfAbsent(Statement st, String column, String ddl) throws SQLException {
+        try (ResultSet rs = st.executeQuery(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+                        + " AND TABLE_NAME = 'capability_provider' AND COLUMN_NAME = '" + column + "'")) {
+            rs.next();
+            if (rs.getInt(1) == 0) {
+                st.executeUpdate("ALTER TABLE capability_provider ADD COLUMN " + ddl);
+            }
+        }
+    }
+
     @Override
     public void save(CapabilityProvider provider, List<Capability> capabilities) {
         try {
             connection.setAutoCommit(false);
             try (PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO capability_provider
-                      (provider_id, app_name, base_url, auth_type, call_token, mode, status, last_beat_at, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      (provider_id, app_name, base_url, auth_type, auth_model, auth_header_name,
+                       auth_param_name, auth_value_encrypted, source, call_token, mode, status, last_beat_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON DUPLICATE KEY UPDATE
                       app_name = VALUES(app_name), base_url = VALUES(base_url),
-                      auth_type = VALUES(auth_type), call_token = VALUES(call_token),
+                      auth_type = VALUES(auth_type), auth_model = VALUES(auth_model),
+                      auth_header_name = VALUES(auth_header_name), auth_param_name = VALUES(auth_param_name),
+                      auth_value_encrypted = VALUES(auth_value_encrypted), source = VALUES(source),
+                      call_token = VALUES(call_token),
                       mode = VALUES(mode), status = VALUES(status), last_beat_at = VALUES(last_beat_at)""")) {
                 ps.setString(1, provider.providerId());
                 ps.setString(2, provider.appName());
                 ps.setString(3, provider.baseUrl());
                 ps.setString(4, provider.authType());
-                ps.setString(5, provider.callToken());
-                ps.setString(6, provider.mode());
-                ps.setString(7, provider.status().name());
-                ps.setTimestamp(8, ts(provider.lastBeatAt()));
-                ps.setTimestamp(9, ts(provider.createdAt()));
+                ps.setString(5, provider.authModel());
+                ps.setString(6, provider.authHeaderName());
+                ps.setString(7, provider.authParamName());
+                ps.setString(8, provider.authValueEncrypted());
+                ps.setString(9, provider.source());
+                ps.setString(10, provider.callToken());
+                ps.setString(11, provider.mode());
+                ps.setString(12, provider.status().name());
+                ps.setTimestamp(13, ts(provider.lastBeatAt()));
+                ps.setTimestamp(14, ts(provider.createdAt()));
                 ps.executeUpdate();
             }
             for (Capability cap : capabilities) {
@@ -150,6 +182,11 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
                         rs.getString("app_name"),
                         rs.getString("base_url"),
                         rs.getString("auth_type"),
+                        rs.getString("auth_model"),
+                        rs.getString("auth_header_name"),
+                        rs.getString("auth_param_name"),
+                        rs.getString("auth_value_encrypted"),
+                        rs.getString("source"),
                         rs.getString("mode"),
                         safeStatus(rs.getString("status")),
                         rs.getTimestamp("last_beat_at") == null ? null : rs.getTimestamp("last_beat_at").toInstant(),
@@ -168,7 +205,7 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
         try (Statement st = connection.createStatement();
              ResultSet rs = st.executeQuery("SELECT * FROM capability")) {
             while (rs.next()) {
-                String capName = rs.getString("capability_name");
+                String providerId = rs.getString("provider_id");
                 String full = rs.getString("parameters_schema");
                 Map<String, String> parameters = parseParameters(full);
                 Capability cap = new Capability(
@@ -179,7 +216,8 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
                         rs.getString("endpoint_method"),
                         rs.getBoolean("retryable"),
                         rs.getString("namespace"));
-                map.computeIfAbsent(capName, k -> new ArrayList<>()).add(cap);
+                // 以 provider_id 为 key（Registry.loadPersisted 按提供者恢复能力）
+                map.computeIfAbsent(providerId, k -> new ArrayList<>()).add(cap);
             }
         } catch (SQLException e) {
             throw new IllegalStateException("加载能力定义失败", e);

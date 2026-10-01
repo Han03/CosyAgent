@@ -2,6 +2,7 @@ package com.cosy.agent.agent.capability;
 
 import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.resilience.ResilienceTarget;
+import com.cosy.agent.agent.router.ApiKeyCipher;
 import com.cosy.agent.agent.tool.ToolRegistry;
 import com.cosy.agent.common.exception.BizException;
 import com.sun.net.httpserver.HttpServer;
@@ -99,7 +100,7 @@ class CapabilityRegistryTest {
         });
 
         registry = new CapabilityRegistry(toolRegistry, new MemoryCapabilityStore(), props,
-                resilience, RestClient.builder());
+                resilience, RestClient.builder(), new ApiKeyCipher());
     }
 
     @AfterEach
@@ -110,6 +111,7 @@ class CapabilityRegistryTest {
 
     private CapabilityRegistry.RegisterRequest request(String appName, String baseUrl, String mode) {
         return new CapabilityRegistry.RegisterRequest(appName, baseUrl, mode, "test",
+                "none", null, null, null, "console",
                 List.of(new Capability("echo", "回显测试能力", Map.of("msg", "string"),
                         "/api/echo", "POST", false, "test")));
     }
@@ -228,7 +230,8 @@ class CapabilityRegistryTest {
         Capability longTask = new Capability("tts", "整章合成（长任务）", Map.of("script_id", "int"),
                 "/api/submit", "POST", false, "test",
                 Capability.MODE_SUBMIT_POLL, "/api/status/{id}", "/api/result/{id}", 100, 5_000);
-        registry.register(new CapabilityRegistry.RegisterRequest("app-a", url, "ap", "test", List.of(longTask)));
+        registry.register(new CapabilityRegistry.RegisterRequest("app-a", url, "ap", "test",
+                "none", null, null, null, "console", List.of(longTask)));
 
         Object result = registry.call("test_tts", Map.of("script_id", 3));
         assertThat(result.toString()).contains("合成完成").contains("history_id");
@@ -260,9 +263,11 @@ class CapabilityRegistryTest {
                     "/api/submit", "POST", false, "test",
                     Capability.MODE_SUBMIT_POLL, "/api/status/{id}", "/api/result/{id}", 50, 5_000);
             registry.register(new CapabilityRegistry.RegisterRequest("app-a",
-                    "http://127.0.0.1:" + failing.getAddress().getPort(), "ap", "test", List.of(longTask)));
+                    "http://127.0.0.1:" + failing.getAddress().getPort(), "ap", "test",
+                    "none", null, null, null, "console", List.of(longTask)));
             registry.register(new CapabilityRegistry.RegisterRequest("app-b",
                     "http://127.0.0.1:" + providerA.getAddress().getPort(), "ap", "test",
+                    "none", null, null, null, "console",
                     List.of(new Capability("tts", "整章合成（长任务）", Map.of("script_id", "int"),
                             "/api/submit", "POST", false, "test",
                             Capability.MODE_SUBMIT_POLL, "/api/status/{id}", "/api/result/{id}", 50, 5_000))));
@@ -292,12 +297,66 @@ class CapabilityRegistryTest {
             Capability detail = new Capability("detail", "剧本详情（路径参数）", Map.of("id", "int"),
                     "/api/scripts/{id}", "GET", true, "test");
             registry.register(new CapabilityRegistry.RegisterRequest("app-a",
-                    "http://127.0.0.1:" + server.getAddress().getPort(), "ap", "test", List.of(detail)));
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "ap", "test",
+                    "none", null, null, null, "console", List.of(detail)));
 
             Object result = registry.call("test_detail", Map.of("id", 5));
             // 路径模板已替换且未残留 query：/api/scripts/5
             assertThat(seen.get()).isEqualTo("/api/scripts/5");
             assertThat(result.toString()).contains("\"ok\":true");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void authModels_injectBearerHeaderAndQuery() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        List<String> seenAuth = new java.util.ArrayList<>();
+        List<String> seenApiKey = new java.util.ArrayList<>();
+        List<String> seenUris = new java.util.ArrayList<>();
+        server.createContext("/api/weather", exchange -> {
+            seenAuth.add(exchange.getRequestHeaders().getFirst("Authorization"));
+            seenApiKey.add(exchange.getRequestHeaders().getFirst("X-API-Key"));
+            seenUris.add(exchange.getRequestURI().toString());
+            byte[] body = "{\"temp\":20}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort();
+            // bearer → Authorization: Bearer {key}
+            registry.register(new CapabilityRegistry.RegisterRequest("bearer-app", url, "ap", "test",
+                    "bearer", null, null, "secret-key", "console",
+                    List.of(new Capability("w_bearer", "天气", Map.of("city", "string"),
+                            "/api/weather", "GET", false, "test"))));
+            registry.call("test_w_bearer", Map.of("city", "sh"));
+            assertThat(seenAuth.get(0)).isEqualTo("Bearer secret-key");
+            // header → X-API-Key: h-key
+            registry.register(new CapabilityRegistry.RegisterRequest("header-app", url, "ap", "test",
+                    "header", "X-API-Key", null, "h-key", "console",
+                    List.of(new Capability("w_header", "天气", Map.of("city", "string"),
+                            "/api/weather", "GET", false, "test"))));
+            registry.call("test_w_header", Map.of("city", "sh"));
+            assertThat(seenApiKey.get(1)).isEqualTo("h-key");
+            // query → URL 追加 appid=q-key（URL 编码后）
+            registry.register(new CapabilityRegistry.RegisterRequest("query-app", url, "ap", "test",
+                    "query", null, "appid", "q-key", "console",
+                    List.of(new Capability("w_query", "天气", Map.of("city", "string"),
+                            "/api/weather", "GET", false, "test"))));
+            registry.call("test_w_query", Map.of("city", "sh"));
+            assertThat(seenUris.get(2)).contains("appid=q-key");
+            // 无认证（none）不注入 Authorization
+            registry.register(new CapabilityRegistry.RegisterRequest("none-app", url, "ap", "test",
+                    "none", null, null, null, "console",
+                    List.of(new Capability("w_none", "天气", Map.of("city", "string"),
+                            "/api/weather", "GET", false, "test"))));
+            registry.call("test_w_none", Map.of("city", "sh"));
+            assertThat(seenAuth.get(3)).isNull();
         } finally {
             server.stop(0);
         }

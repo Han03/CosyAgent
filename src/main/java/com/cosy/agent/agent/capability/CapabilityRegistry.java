@@ -2,6 +2,7 @@ package com.cosy.agent.agent.capability;
 
 import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.resilience.ResilienceTarget;
+import com.cosy.agent.agent.router.ApiKeyCipher;
 import com.cosy.agent.agent.tool.ToolRegistry;
 import com.cosy.agent.common.enums.ErrorCode;
 import com.cosy.agent.common.exception.BizException;
@@ -55,6 +56,7 @@ public class CapabilityRegistry {
     private final CapabilityProperties properties;
     private final ResilienceSupport resilience;
     private final RestClient restClient;
+    private final ApiKeyCipher apiKeyCipher;
 
     /** 提交/轮询响应的 JSON 解析（Jackson 无状态、线程安全） */
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -69,12 +71,13 @@ public class CapabilityRegistry {
 
     public CapabilityRegistry(ToolRegistry toolRegistry, CapabilityStore store,
                               CapabilityProperties properties, ResilienceSupport resilience,
-                              RestClient.Builder restClientBuilder) {
+                              RestClient.Builder restClientBuilder, ApiKeyCipher apiKeyCipher) {
         this.toolRegistry = toolRegistry;
         this.store = store;
         this.properties = properties;
         this.resilience = resilience;
         this.restClient = restClientBuilder.build();
+        this.apiKeyCipher = apiKeyCipher;
         loadPersisted();
     }
 
@@ -82,6 +85,7 @@ public class CapabilityRegistry {
     private void loadPersisted() {
         List<CapabilityProvider> loaded = store.loadProviders();
         Map<String, List<Capability>> loadedCaps = store.loadCapabilities();
+        log.info("启动恢复: providers={}, loadedCaps keys={}", loaded.size(), loadedCaps.keySet());
         for (CapabilityProvider p : loaded) {
             if (!p.isCp()) {
                 continue;
@@ -101,13 +105,75 @@ public class CapabilityRegistry {
     /** 注册提供者及其能力。AP 即成功（内存）；CP 落库确认后返回。 */
     public RegisterResult register(RegisterRequest request) {
         String mode = normalizeMode(request.mode());
+        String authModel = normalizeAuthModel(request.authModel());
         String providerId = UUID.randomUUID().toString().replace("-", "");
         String callToken = UUID.randomUUID().toString().replace("-", "");
         Instant now = Instant.now();
         CapabilityProvider provider = new CapabilityProvider(
                 providerId, request.appName(), request.baseUrl(), "shared-secret",
-                mode, CapabilityStatus.UP, now, callToken, now);
+                authModel, request.authHeaderName(), request.authParamName(),
+                apiKeyCipher.encrypt(request.authValue()),
+                request.source(), mode, CapabilityStatus.UP, now, callToken, now);
 
+        List<Capability> caps = buildCapabilities(request);
+        for (Capability cap : caps) {
+            capabilities.computeIfAbsent(cap.fullName(), k -> new LinkedHashMap<>()).put(providerId, cap);
+        }
+        providers.put(providerId, new AtomicReference<>(provider));
+
+        if (provider.isCp()) {
+            store.save(provider, caps); // CP：落库确认（失败即注册失败，强一致）
+        }
+        refreshTools();
+        log.info("能力注册成功: provider={}, mode={}, capabilities={}", providerId, mode, caps.size());
+        return new RegisterResult(providerId, caps.stream().map(Capability::fullName).toList(), callToken);
+    }
+
+    /**
+     * 更新提供者（管理端，保留 providerId/callToken/createdAt/status）：
+     * 认证字段全量覆盖（authValue 为空保持原密钥），能力定义全量替换。
+     * CP 落库（先删后插，避免旧能力行残留）；返回 providerId。
+     */
+    public String updateProvider(String providerId, RegisterRequest request) {
+        AtomicReference<CapabilityProvider> ref = providers.get(providerId);
+        if (ref == null) {
+            throw new BizException(ErrorCode.CAPABILITY_PROVIDER_NOT_FOUND, providerId);
+        }
+        if (request.appName() == null || request.appName().isBlank()
+                || request.baseUrl() == null || request.baseUrl().isBlank()) {
+            throw new BizException(ErrorCode.CAPABILITY_INVALID_MODE, "appName 与 baseUrl 必填");
+        }
+        CapabilityProvider old = ref.get();
+        String authModel = normalizeAuthModel(request.authModel());
+        String encrypted = (request.authValue() == null || request.authValue().isBlank())
+                ? old.authValueEncrypted()
+                : apiKeyCipher.encrypt(request.authValue());
+        CapabilityProvider updated = new CapabilityProvider(
+                providerId, request.appName(), request.baseUrl(), "shared-secret",
+                authModel, request.authHeaderName(), request.authParamName(), encrypted,
+                "console", old.mode(), old.status(), old.lastBeatAt(), old.callToken(), old.createdAt());
+        List<Capability> caps = buildCapabilities(request);
+        // 能力全量替换：先摘除该提供者旧能力（含空名清理）
+        capabilities.forEach((fullName, byProvider) -> byProvider.remove(providerId));
+        capabilities.entrySet().removeIf(e -> e.getValue().isEmpty());
+        for (Capability cap : caps) {
+            capabilities.computeIfAbsent(cap.fullName(), k -> new LinkedHashMap<>()).put(providerId, cap);
+        }
+        ref.set(updated);
+        if (updated.isCp()) {
+            store.deleteProvider(providerId); // 先删旧行（provider 级联能力），再落新数据
+            store.save(updated, caps);
+        }
+        refreshTools();
+        log.info("能力提供者更新: provider={}, capabilities={}", providerId, caps.size());
+        return providerId;
+    }
+
+    /** 校验并构造能力全量（工具名与本地工具冲突即拒绝；注册/更新共用） */
+    private List<Capability> buildCapabilities(RegisterRequest request) {
+        if (request.capabilities() == null || request.capabilities().isEmpty()) {
+            throw new BizException(ErrorCode.CAPABILITY_INVALID_MODE, "capabilities 至少一项");
+        }
         List<Capability> caps = new ArrayList<>();
         for (Capability c : request.capabilities()) {
             String namespace = c.namespace() == null || c.namespace().isBlank()
@@ -126,16 +192,8 @@ public class CapabilityRegistry {
                 throw new BizException(ErrorCode.CAPABILITY_NAME_CONFLICT, fullName);
             }
             caps.add(full);
-            capabilities.computeIfAbsent(fullName, k -> new LinkedHashMap<>()).put(providerId, full);
         }
-        providers.put(providerId, new AtomicReference<>(provider));
-
-        if (provider.isCp()) {
-            store.save(provider, caps); // CP：落库确认（失败即注册失败，强一致）
-        }
-        refreshTools();
-        log.info("能力注册成功: provider={}, mode={}, capabilities={}", providerId, mode, caps.size());
-        return new RegisterResult(providerId, caps.stream().map(Capability::fullName).toList(), callToken);
+        return caps;
     }
 
     /** AP 心跳续约（CP 也可续约仅更新 lastBeatAt，不参与摘除判定） */
@@ -147,9 +205,11 @@ public class CapabilityRegistry {
         Instant now = Instant.now();
         ref.updateAndGet(p -> p.status() == CapabilityStatus.DOWN
                 ? new CapabilityProvider(p.providerId(), p.appName(), p.baseUrl(), p.authType(),
-                        p.mode(), CapabilityStatus.UP, now, p.callToken(), p.createdAt())
+                        p.authModel(), p.authHeaderName(), p.authParamName(), p.authValueEncrypted(),
+                        p.source(), p.mode(), CapabilityStatus.UP, now, p.callToken(), p.createdAt())
                 : new CapabilityProvider(p.providerId(), p.appName(), p.baseUrl(), p.authType(),
-                        p.mode(), p.status(), now, p.callToken(), p.createdAt()));
+                        p.authModel(), p.authHeaderName(), p.authParamName(), p.authValueEncrypted(),
+                        p.source(), p.mode(), p.status(), now, p.callToken(), p.createdAt()));
     }
 
     /** 注销：AP/CP 均可显式注销；CP 必须显式注销才移除 */
@@ -385,6 +445,8 @@ public class CapabilityRegistry {
         }
         String url = provider.baseUrl().replaceAll("/+$", "") + path;
         boolean isGet = "GET".equalsIgnoreCase(capability.endpointMethod());
+        // query 认证参数优先拼接（模型生成的业务参数不覆盖认证参数名）
+        url = url + authQuery(provider, url);
         if (isGet && !params.isEmpty()) {
             StringBuilder q = new StringBuilder(url.contains("?") ? "&" : "?");
             params.forEach((k, v) -> q.append(k).append('=').append(v));
@@ -392,12 +454,14 @@ public class CapabilityRegistry {
         }
         String body;
         if (isGet) {
-            body = restClient.get().uri(url)
-                    .header("X-Capability-Call-Token", provider.callToken())
+            RestClient.RequestHeadersSpec<?> get = restClient.get().uri(url);
+            applyAuthHeaders(get, provider);
+            body = get.header("X-Capability-Call-Token", provider.callToken())
                     .retrieve().body(String.class);
         } else {
-            body = restClient.post().uri(url)
-                    .header("X-Capability-Call-Token", provider.callToken())
+            RestClient.RequestBodySpec post = restClient.post().uri(url);
+            applyAuthHeaders(post, provider);
+            body = post.header("X-Capability-Call-Token", provider.callToken())
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(params)
                     .retrieve().body(String.class);
@@ -416,8 +480,9 @@ public class CapabilityRegistry {
         }
         String base = provider.baseUrl().replaceAll("/+$", "");
         // 1) 提交
-        String submitResp = restClient.post().uri(base + capability.endpointPath())
-                .header("X-Capability-Call-Token", provider.callToken())
+        RestClient.RequestBodySpec submit = restClient.post().uri(base + capability.endpointPath() + authQuery(provider, base + capability.endpointPath()));
+        applyAuthHeaders(submit, provider);
+        String submitResp = submit.header("X-Capability-Call-Token", provider.callToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(args == null ? Map.of() : args)
                 .retrieve().body(String.class);
@@ -431,16 +496,18 @@ public class CapabilityRegistry {
         long deadline = System.currentTimeMillis() + capability.pollTimeoutMs();
         while (System.currentTimeMillis() < deadline) {
             sleepQuietly(capability.pollIntervalMs());
-            String statusResp = restClient.get().uri(base + statusPath)
-                    .header("X-Capability-Call-Token", provider.callToken())
+            RestClient.RequestHeadersSpec<?> poll = restClient.get().uri(base + statusPath + authQuery(provider, base + statusPath));
+            applyAuthHeaders(poll, provider);
+            String statusResp = poll.header("X-Capability-Call-Token", provider.callToken())
                     .retrieve().body(String.class);
             String status = extractStatus(statusResp);
             if ("success".equalsIgnoreCase(status)) {
                 // 3) 成功 → 取完整结果
-                String result = restClient.get().uri(base + resultPath)
-                        .header("X-Capability-Call-Token", provider.callToken())
+                RestClient.RequestHeadersSpec<?> result = restClient.get().uri(base + resultPath + authQuery(provider, base + resultPath));
+                applyAuthHeaders(result, provider);
+                String resp = result.header("X-Capability-Call-Token", provider.callToken())
                         .retrieve().body(String.class);
-                return result == null ? Map.of() : result;
+                return resp == null ? Map.of() : resp;
             }
             if ("failed".equalsIgnoreCase(status)) {
                 throw new IllegalStateException("长任务失败: " + statusResp);
@@ -490,7 +557,8 @@ public class CapabilityRegistry {
 
     private CapabilityProvider withStatus(CapabilityProvider p, CapabilityStatus status) {
         return new CapabilityProvider(p.providerId(), p.appName(), p.baseUrl(), p.authType(),
-                p.mode(), status, p.lastBeatAt(), p.callToken(), p.createdAt());
+                p.authModel(), p.authHeaderName(), p.authParamName(), p.authValueEncrypted(),
+                p.source(), p.mode(), status, p.lastBeatAt(), p.callToken(), p.createdAt());
     }
 
     private String normalizeMode(String mode) {
@@ -499,6 +567,64 @@ public class CapabilityRegistry {
             throw new BizException(ErrorCode.CAPABILITY_INVALID_MODE, m);
         }
         return m.toLowerCase();
+    }
+
+    /** 认证模型归一化：none | bearer | header | query（默认 none，兼容旧注册体） */
+    private String normalizeAuthModel(String authModel) {
+        String m = authModel == null || authModel.isBlank() ? "none" : authModel.toLowerCase();
+        switch (m) {
+            case "none", "bearer", "header", "query" -> {
+                return m;
+            }
+            default -> throw new BizException(ErrorCode.CAPABILITY_INVALID_MODE, "authModel=" + authModel);
+        }
+    }
+
+    /**
+     * 第三方认证注入（提供者级，与 X-Capability-Call-Token 并存互不冲突）：
+     * <ul>
+     *   <li>none：不注入</li>
+     *   <li>bearer：Authorization: Bearer {key}</li>
+     *   <li>header：{authHeaderName}: {key}</li>
+     *   <li>query：追加 URL 查询参数（见 {@link #authQuery}）</li>
+     * </ul>
+     * 密钥解密失败（密钥变更）时静默跳过认证，保证请求不中断。
+     */
+    private void applyAuthHeaders(RestClient.RequestHeadersSpec<?> spec, CapabilityProvider provider) {
+        String model = provider.authModel() == null ? "none" : provider.authModel();
+        if ("none".equalsIgnoreCase(model)) {
+            return;
+        }
+        String secret = apiKeyCipher.decrypt(provider.authValueEncrypted());
+        if (secret == null || secret.isBlank()) {
+            return;
+        }
+        if ("bearer".equalsIgnoreCase(model)) {
+            spec.header("Authorization", "Bearer " + secret);
+        } else if ("header".equalsIgnoreCase(model)) {
+            String name = provider.authHeaderName();
+            if (name == null || name.isBlank()) {
+                throw new IllegalStateException("header 认证必须配置 authHeaderName: " + provider.providerId());
+            }
+            spec.header(name, secret);
+        }
+    }
+
+    /** query 认证：返回追加到 URL 的参数字符串（含 ? 或 & 前缀；非 query 模式返回空串） */
+    private String authQuery(CapabilityProvider provider, String url) {
+        if (!"query".equalsIgnoreCase(provider.authModel() == null ? "none" : provider.authModel())) {
+            return "";
+        }
+        String secret = apiKeyCipher.decrypt(provider.authValueEncrypted());
+        if (secret == null || secret.isBlank()) {
+            return "";
+        }
+        String name = provider.authParamName();
+        if (name == null || name.isBlank()) {
+            throw new IllegalStateException("query 认证必须配置 authParamName: " + provider.providerId());
+        }
+        return (url.contains("?") ? "&" : "?")
+                + name + "=" + java.net.URLEncoder.encode(secret, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private String rootMessage(Throwable e) {
@@ -515,6 +641,18 @@ public class CapabilityRegistry {
             String baseUrl,
             String mode,
             String namespace,
+            String authModel,
+            String authHeaderName,
+            String authParamName,
+            String authValue,
+            String source,
             List<Capability> capabilities) {
+
+        /** 兼容旧注册体（无认证字段）：默认 none */
+        public RegisterRequest {
+            if (authModel == null || authModel.isBlank()) {
+                authModel = "none";
+            }
+        }
     }
 }
