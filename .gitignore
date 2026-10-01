@@ -24,3 +24,5 @@ logs/
 
 # 敏感信息
 application-local.yml
+
+dump.rdb
