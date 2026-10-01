@@ -23,13 +23,16 @@ public class ModelRoutingConfig {
     public ModelRouter modelRouter(ChatModel defaultChatModel, OpenAiChatOptions agentChatOptions,
                                    ModelRoutingProperties properties,
                                    com.cosy.agent.agent.resilience.ResilienceSupport resilience,
-                                   ModelRoutingConfigStore configStore) {
+                                   ModelRoutingConfigStore configStore,
+                                   com.cosy.agent.agent.tool.ToolRegistry toolRegistry) {
         RouteConfig baseline = RouteConfig.fromProperties(properties);
         RouteConfig initial = configStore.load().orElse(baseline);
         if (configStore.load().isPresent()) {
             log.info("模型路由配置来自持久化 store（覆盖 YAML 基线）");
         }
-        ModelRouter router = new ModelRouter(defaultChatModel, agentChatOptions, resilience, initial);
+        // 传入 ToolRegistry：每轮调用动态注入工具定义（本地工具 + 能力注册中心远程能力）
+        ModelRouter router = new ModelRouter(defaultChatModel, agentChatOptions, resilience, initial,
+                new com.cosy.agent.agent.router.ModelPlatformRegistry(agentChatOptions), toolRegistry);
         log.info("模型路由初始化: enabled={}, routes={}", initial.enabled(), initial.routes().keySet());
         return router;
     }

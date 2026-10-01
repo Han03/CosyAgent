@@ -19,7 +19,12 @@ public enum ErrorCode {
     TASK_NOT_FOUND(10008, "任务不存在"),
     SESSION_NOT_FOUND(10009, "会话不存在"),
     MODEL_NOT_AVAILABLE(10010, "模型不可用"),
-    CONFIG_SAVE_FAILED(10011, "配置保存失败");
+    CONFIG_SAVE_FAILED(10011, "配置保存失败"),
+    CAPABILITY_NAME_CONFLICT(10012, "能力名与已有工具冲突"),
+    CAPABILITY_NOT_FOUND(10013, "能力不存在或已摘除"),
+    CAPABILITY_ALL_FAILED(10014, "能力全部候选调用失败"),
+    CAPABILITY_PROVIDER_NOT_FOUND(10015, "能力提供者不存在"),
+    CAPABILITY_INVALID_MODE(10016, "非法注册模式（仅支持 ap/cp）");
 
     private final int code;
     private final String message;

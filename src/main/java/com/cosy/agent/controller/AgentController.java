@@ -51,6 +51,7 @@ public class AgentController {
 
     public AgentController(AgentOrchestrator orchestrator, ToolRegistry toolRegistry, TaskStore taskStore,
                            MemoryStore memoryStore, com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin,
+                           @org.springframework.beans.factory.annotation.Qualifier("applicationTaskExecutor")
                            TaskExecutor taskExecutor) {
         this.orchestrator = orchestrator;
         this.toolRegistry = toolRegistry;

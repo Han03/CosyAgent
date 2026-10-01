@@ -124,6 +124,34 @@ cosy:
       # API 鉴权（Step 6 生产化）：配置后 /api/** 需携带 X-API-Key 请求头；
       # 留空（默认）不启用，便于本地开发与测试。
       api-key: ${COSY_AGENT_API_KEY:}
+    capability:
+      # 能力注册中心（参考 Nacos AP/CP）：外部项目注册能力 → Agent 远程调用
+      # enabled=false（默认）：注册 API 与动态工具注入不生效，系统与现状等价
+      enabled: ${COSY_AGENT_CAPABILITY_ENABLED:false}
+      # 注册鉴权令牌（X-Capability-Token；空 = 不校验，本地开发可用）
+      token: ${COSY_AGENT_CAPABILITY_TOKEN:}
+      # 注册未声明 mode 时的兜底：ap（临时/心跳摘除）| cp（持久/显式注销）
+      default-mode: ${COSY_AGENT_CAPABILITY_DEFAULT_MODE:ap}
+      heartbeat:
+        # AP 心跳节奏（对齐 Nacos 临时实例）：5s 续约周期 / 15s 未续约标记可疑 / 30s 未续约摘除
+        interval: ${COSY_AGENT_CAPABILITY_HEARTBEAT_INTERVAL:5s}
+        suspect-after: ${COSY_AGENT_CAPABILITY_HEARTBEAT_SUSPECT_AFTER:15s}
+        expire-after: ${COSY_AGENT_CAPABILITY_HEARTBEAT_EXPIRE_AFTER:30s}
+      probe:
+        # CP 主动健康检查：周期探测 {baseUrl}/healthz，失败标 DOWN（不摘除），恢复自动 UP
+        enabled: ${COSY_AGENT_CAPABILITY_PROBE_ENABLED:true}
+        interval: ${COSY_AGENT_CAPABILITY_PROBE_INTERVAL:60s}
+      # CP 持久化存储：memory（默认，仅内存）| mysql（落库 + 启动恢复）
+      store: ${COSY_AGENT_CAPABILITY_STORE:memory}
+      # 默认命名空间（注册未声明时兜底；能力全名 = {namespace}_{name}）
+      namespace: ${COSY_AGENT_CAPABILITY_NAMESPACE:default}
+      # 远程能力调用超时（HTTP 请求读超时，调用侧容错另有 TOOL TimeLimiter）
+      call-timeout: ${COSY_AGENT_CAPABILITY_CALL_TIMEOUT:5s}
+      mysql:
+        # store=mysql 时生效（原生 JDBC，不触发 DataSource 自动配置）
+        url: ${COSY_AGENT_CAPABILITY_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+        username: ${COSY_AGENT_CAPABILITY_MYSQL_USER:cosy}
+        password: ${COSY_AGENT_CAPABILITY_MYSQL_PASSWORD:cosy}
 
 server:
   port: ${SERVER_PORT:8080}

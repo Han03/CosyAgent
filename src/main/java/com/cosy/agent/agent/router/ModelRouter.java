@@ -36,21 +36,30 @@ public class ModelRouter {
     private final OpenAiChatOptions templateOptions;
     private final ResilienceSupport resilience;
     private final ModelPlatformRegistry registry;
+    private final com.cosy.agent.agent.tool.ToolRegistry toolRegistry; // 可空：null 时工具取 templateOptions 快照
     private final AtomicReference<RouteConfig> config;
 
     public ModelRouter(ChatModel defaultChatModel, OpenAiChatOptions templateOptions,
                        ResilienceSupport resilience, RouteConfig baseline) {
         this(defaultChatModel, templateOptions, resilience, baseline,
-                new ModelPlatformRegistry(templateOptions));
+                new ModelPlatformRegistry(templateOptions), null);
     }
 
-    /** 测试/定制用：注入平台注册表 */
+    /** 测试/定制用：注入平台注册表（工具动态注入关闭，工具取 templateOptions 快照） */
     ModelRouter(ChatModel defaultChatModel, OpenAiChatOptions templateOptions,
                 ResilienceSupport resilience, RouteConfig baseline, ModelPlatformRegistry registry) {
+        this(defaultChatModel, templateOptions, resilience, baseline, registry, null);
+    }
+
+    /** 定制用：注入平台注册表与工具注册表（每轮调用动态取工具定义，能力注册即时生效） */
+    public ModelRouter(ChatModel defaultChatModel, OpenAiChatOptions templateOptions,
+                       ResilienceSupport resilience, RouteConfig baseline, ModelPlatformRegistry registry,
+                       com.cosy.agent.agent.tool.ToolRegistry toolRegistry) {
         this.defaultChatModel = defaultChatModel;
         this.templateOptions = templateOptions;
         this.resilience = resilience;
         this.registry = registry;
+        this.toolRegistry = toolRegistry;
         this.config = new AtomicReference<>(baseline);
     }
 
@@ -122,11 +131,24 @@ public class ModelRouter {
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(modelName)
                 .temperature(templateOptions.getTemperature())
-                .tools(templateOptions.getTools())
+                .tools(dynamicTools())
                 .build();
         Prompt candidatePrompt = new Prompt(prompt.getInstructions(), options);
         // 每个候选独立套 llm 容错（重试/熔断/限流/超时）；候选间降级在链层，不重复重试
         return resilience.execute(ResilienceTarget.LLM, () -> model.call(candidatePrompt));
+    }
+
+    /**
+     * 动态工具定义：每次调用从 ToolRegistry 实时读取（本地工具 + 动态注册的能力），
+     * 覆盖装配期静态快照——能力注册/摘除后，模型下一轮即可见/不可见，无需重启。
+     */
+    private List<org.springframework.ai.openai.api.OpenAiApi.FunctionTool> dynamicTools() {
+        if (toolRegistry == null) {
+            return templateOptions.getTools();
+        }
+        return toolRegistry.all().stream()
+                .map(com.cosy.agent.agent.tool.AgentToolBridging::toFunctionTool)
+                .toList();
     }
 
     /** 可降级异常判定：连接失败 / 超时 / 5xx / 429 / 熔断打开 → true；4xx 等 → false */

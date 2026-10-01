@@ -31,6 +31,11 @@ public class ToolRegistry {
         }
     }
 
+    /** 按名移除工具（动态能力摘除时调用）；不存在时静默 */
+    public void unregister(String name) {
+        tools.remove(name);
+    }
+
     public Optional<AgentTool> find(String name) {
         return Optional.ofNullable(tools.get(name));
     }
