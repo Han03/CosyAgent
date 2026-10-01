@@ -130,6 +130,24 @@ class ModelRouterTest {
     }
 
     @Test
+    void routeTypePicksItsOwnChain_andUnknownFallsBackToDefault() {
+        Map<String, List<String>> routes = new LinkedHashMap<>();
+        routes.put(RouteConfig.DEFAULT_ROUTE, List.of("openai/gpt-4o-mini"));
+        routes.put("reasoning", List.of("openai/gpt-4o"));
+        RouteConfig cfg = new RouteConfig(true, 5, config.platforms(), routes);
+
+        // auto + reasoning → 走 reasoning 链
+        assertThat(cfg.resolveCandidates("auto", "reasoning"))
+                .containsExactly("openai/gpt-4o");
+        // auto + 未知类型 → 回退 default 链
+        assertThat(cfg.resolveCandidates("auto", "unknown"))
+                .containsExactly("openai/gpt-4o-mini");
+        // 指定模型 → 锁定单候选，忽略路由类型
+        assertThat(cfg.resolveCandidates("openai/gpt-4o", "reasoning"))
+                .containsExactly("openai/gpt-4o");
+    }
+
+    @Test
     void unknownPlatformChoiceThrowsImmediately() {
         assertThatThrownBy(() -> routerWith(true)
                 .call(new Prompt("hi", OpenAiChatOptions.builder().build()), "unknown/model"))

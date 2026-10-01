@@ -46,7 +46,13 @@ public class AgentOrchestrator {
 
     /** 会话惰性创建 + 模型选择透传（模型路由 v2：X-Cosy-Model 请求头） */
     public AgentResult chat(String sessionId, String userId, String input, Boolean mockOverride, String modelChoice) {
-        return streamChat(sessionId, userId, input, mockOverride, modelChoice, null);
+        return streamChat(sessionId, userId, input, mockOverride, modelChoice, null, null);
+    }
+
+    /** 会话惰性创建 + 模型选择 + 路由类型透传（X-Cosy-Route-Type 请求头） */
+    public AgentResult chat(String sessionId, String userId, String input, Boolean mockOverride,
+                            String modelChoice, String routeType) {
+        return streamChat(sessionId, userId, input, mockOverride, modelChoice, routeType, null);
     }
 
     /**
@@ -55,6 +61,12 @@ public class AgentOrchestrator {
      */
     public AgentResult streamChat(String sessionId, String userId, String input, Boolean mockOverride,
                                   String modelChoice, AgentEventListener listener) {
+        return streamChat(sessionId, userId, input, mockOverride, modelChoice, null, listener);
+    }
+
+    /** 流式对话（路由类型扩展）：auto 模式按 routeType 取候选链 */
+    public AgentResult streamChat(String sessionId, String userId, String input, Boolean mockOverride,
+                                  String modelChoice, String routeType, AgentEventListener listener) {
         // 会话惰性创建：未提供 sessionId 时生成（客户端首条消息触发，任务 input 即会话名）
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = "s-" + java.util.UUID.randomUUID().toString().substring(0, 8);
@@ -62,7 +74,7 @@ public class AgentOrchestrator {
         AgentTask task = taskStore.createTask(sessionId, userId, input);
         markRunning(task);
         AgentContext context = AgentContext.create(
-                sessionId, userId, properties.maxIterations(), task.taskId(), mockOverride, modelChoice);
+                sessionId, userId, properties.maxIterations(), task.taskId(), mockOverride, modelChoice, routeType);
         AgentResult result = reactAgent.run(context, input, List.of(), listener);
         finish(task.taskId(), result);
         if (listener != null) {

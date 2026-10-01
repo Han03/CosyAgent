@@ -61,7 +61,7 @@ class AgentApiIntegrationTest {
         AssistantMessage finalAnswer = AssistantMessage.builder()
                 .content("当前时间是 2026-09-24 10:00:00。")
                 .build();
-        when(modelRouter.call(any(Prompt.class), any()))
+        when(modelRouter.call(any(Prompt.class), any(), any()))
                 .thenReturn(RouteResult.direct(new ChatResponse(List.of(new Generation(withToolCall))), "openai/test"),
                         RouteResult.direct(new ChatResponse(List.of(new Generation(finalAnswer))), "openai/test"));
     }

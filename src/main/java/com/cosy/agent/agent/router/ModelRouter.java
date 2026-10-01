@@ -87,6 +87,17 @@ public class ModelRouter {
      * @param modelChoice auto（缺省同义）| "平台/模型"（指定即锁定单候选）
      */
     public RouteResult call(Prompt prompt, String modelChoice) {
+        return call(prompt, modelChoice, null);
+    }
+
+    /**
+     * 执行一次模型调用（路由类型感知）。
+     *
+     * @param prompt     消息序列 + 模板 options（含工具定义/温度）；候选 options 以模板复制并替换 model
+     * @param modelChoice auto（缺省同义）| "平台/模型"（指定即锁定单候选，忽略 routeType）
+     * @param routeType  路由类型（如 reasoning/default）；auto 模式按类型取链，缺失回退 default
+     */
+    public RouteResult call(Prompt prompt, String modelChoice, String routeType) {
         RouteConfig cfg = config.get();
         // 兼容回退：路由关闭时走默认单模型（原行为，含 llm 容错）
         if (!cfg.enabled()) {
@@ -94,7 +105,7 @@ public class ModelRouter {
             return RouteResult.direct(resp, "default");
         }
 
-        List<String> candidates = cfg.resolveCandidates(modelChoice);
+        List<String> candidates = cfg.resolveCandidates(modelChoice, routeType);
         if (candidates.isEmpty()) {
             // 路由链为空：退化为默认单模型（如平台未配置）
             log.warn("模型路由候选链为空（routes 未配置），回退默认模型: choice={}", modelChoice);

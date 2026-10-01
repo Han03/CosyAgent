@@ -150,7 +150,8 @@ public class DefaultReActAgent implements ReActAgent {
                             () -> mockEngine.generate(new Prompt(messages, chatOptions)));
                 } else {
                     // 真实模型：走模型路由（候选链 + 降级；每个候选内部已套 llm 容错）
-                    response = modelRouter.call(new Prompt(messages, chatOptions), context.modelChoice()).response();
+                    response = modelRouter.call(new Prompt(messages, chatOptions),
+                            context.modelChoice(), context.routeType()).response();
                 }
             } catch (Exception e) {
                 log.error("LLM 调用失败，sessionId={}, iteration={}", context.sessionId(), iterations, e);

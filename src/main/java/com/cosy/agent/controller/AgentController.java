@@ -62,29 +62,31 @@ public class AgentController {
     }
 
     /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID；
-     * X-Cosy-Model 请求头指定模型或 auto） */
+     * X-Cosy-Model 请求头指定模型或 auto；X-Cosy-Route-Type 指定路由类型） */
     @PostMapping("/chat")
     public Result<AgentResult> chat(@Valid @RequestBody ChatRequest request,
                                     @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader,
-                                    @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader) {
+                                    @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader,
+                                    @RequestHeader(value = "X-Cosy-Route-Type", required = false) String routeTypeHeader) {
         return Result.ok(orchestrator.chat(request.sessionId(), "anonymous", request.message(),
-                parseMock(mockHeader), parseModel(modelHeader)));
+                parseMock(mockHeader), parseModel(modelHeader), parseRouteType(routeTypeHeader)));
     }
 
     /**
      * 流式对话入口（SSE，text/event-stream）：执行过程实时推送
      * thinking / tool / toolResult / answer / done / error 事件，客户端逐事件渲染。
-     * 请求头与 /chat 完全一致（X-Cosy-Mock / X-Cosy-Model）。
+     * 请求头与 /chat 完全一致（X-Cosy-Mock / X-Cosy-Model / X-Cosy-Route-Type）。
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(@Valid @RequestBody ChatRequest request,
                                  @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader,
-                                 @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader) {
+                                 @RequestHeader(value = "X-Cosy-Model", required = false) String modelHeader,
+                                 @RequestHeader(value = "X-Cosy-Route-Type", required = false) String routeTypeHeader) {
         SseEmitter emitter = new SseEmitter(0L); // 无服务端超时；客户端断开由发送失败感知
         taskExecutor.execute(() -> {
             try {
                 orchestrator.streamChat(request.sessionId(), "anonymous", request.message(),
-                        parseMock(mockHeader), parseModel(modelHeader),
+                        parseMock(mockHeader), parseModel(modelHeader), parseRouteType(routeTypeHeader),
                         event -> {
                             try {
                                 emitter.send(SseEmitter.event().name(event.type()).data(event));
@@ -316,6 +318,15 @@ public class AgentController {
 
     /** 解析 X-Cosy-Model 请求头：auto/空白 → null（后端按路由类型链）；"平台/模型" → 原样透传 */
     private String parseModel(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        String value = header.trim();
+        return "auto".equalsIgnoreCase(value) ? null : value;
+    }
+
+    /** 解析 X-Cosy-Route-Type 请求头：auto/空白 → null（回退 default 链）；其余原样透传 */
+    private String parseRouteType(String header) {
         if (header == null || header.isBlank()) {
             return null;
         }

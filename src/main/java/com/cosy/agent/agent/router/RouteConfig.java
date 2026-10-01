@@ -1,6 +1,8 @@
 package com.cosy.agent.agent.router;
 
 import com.cosy.agent.config.ModelRoutingProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,6 +23,8 @@ public record RouteConfig(
         int maxCandidates,
         Map<String, ModelPlatform> platforms,
         Map<String, List<String>> routes) {
+
+    private static final Logger log = LoggerFactory.getLogger(RouteConfig.class);
 
     /** 对话补全端点路径默认值（Spring AI OpenAiApi 约定） */
     public static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
@@ -77,15 +81,22 @@ public record RouteConfig(
     /**
      * 解析本次调用的候选链：
      * <ul>
-     *   <li>modelChoice = auto/空 → 路由类型链（当前固定 default，预留 routeType 扩展）</li>
-     *   <li>modelChoice = platform/model → 单候选链（锁定，不跨模型降级）</li>
+     *   <li>modelChoice = auto/空 → 按路由类型取链（routeType 存在取之，
+     *       否则回退 default 链；routeType 指定的类型不存在时回退 default 并告警）</li>
+     *   <li>modelChoice = platform/model → 单候选链（锁定，不跨模型降级，忽略 routeType）</li>
      * </ul>
      *
      * @return 有序候选列表（按降级优先级）；指定模型平台未注册时抛 {@link IllegalArgumentException}
      */
-    public List<String> resolveCandidates(String modelChoice) {
+    public List<String> resolveCandidates(String modelChoice, String routeType) {
         if (modelChoice == null || modelChoice.isBlank() || "auto".equalsIgnoreCase(modelChoice.trim())) {
-            return truncate(defaultCandidates());
+            String type = routeType == null || routeType.isBlank() ? DEFAULT_ROUTE : routeType.trim();
+            List<String> chain = routes.get(type);
+            if (chain == null) {
+                log.warn("路由类型不存在，回退 default 链: routeType={}", type);
+                chain = defaultCandidates();
+            }
+            return truncate(chain);
         }
         String candidate = modelChoice.trim();
         String platform = candidate.contains("/") ? candidate.substring(0, candidate.indexOf('/')) : candidate;

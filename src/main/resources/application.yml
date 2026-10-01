@@ -92,9 +92,6 @@ cosy:
           - openrouter/stealth/ox-alpha
           - volcengine/doubao-seed-2-1-pro-260628
         reasoning:
-          - zhipu/glm-4-flash
-          - aliyun/qwen-max
-          - openrouter/stealth/ox-alpha
       pg:
         # store=pg 时生效（原生 JDBC，与 task store 同库同源）
         url: ${COSY_MODEL_ROUTING_PG_URL:jdbc:postgresql://localhost:5432/cosy}
