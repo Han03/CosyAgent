@@ -131,10 +131,40 @@ class ModelRoutingAdminTest {
                 .anyMatch(m -> m.modelId().equals("gpt-4o-mini") && m.contextWindow() == 200_000
                         && m.capabilities().equals(List.of("chat")));
 
+        // 清空规则引用后可删除（baseline default 链引用 openai/gpt-4o-mini）
+        admin.updateRules(Map.of(RouteConfig.DEFAULT_ROUTE, List.of()));
         admin.deleteModel("openai", "gpt-4o-mini");
         ArgumentCaptor<RouteConfig> cap3 = ArgumentCaptor.forClass(RouteConfig.class);
-        verify(store, org.mockito.Mockito.times(3)).save(cap3.capture());
+        verify(store, org.mockito.Mockito.times(4)).save(cap3.capture());
         assertThat(cap3.getValue().platforms().get("openai").models()).isEmpty();
+    }
+
+    @Test
+    void deleteModel_referencedByRule_rejected() {
+        admin.addModel("openai", "gpt-4o-mini", new ModelRoutingAdmin.ModelDto(128_000, List.of("chat")));
+        // baseline default 链引用 openai/gpt-4o-mini → 删除被拒绝
+        assertThatThrownBy(() -> admin.deleteModel("openai", "gpt-4o-mini"))
+                .isInstanceOf(com.cosy.agent.common.exception.BizException.class);
+        // 清空规则引用后可删除
+        admin.updateRules(Map.of(RouteConfig.DEFAULT_ROUTE, List.of()));
+        admin.deleteModel("openai", "gpt-4o-mini");
+    }
+
+    @Test
+    void updateRules_autoRegistersMissingModel_andReturnsHint() {
+        // 先注册 zhipu 平台（无模型规格）；规则引用其未登记模型 → 自动补登记并返回提示
+        admin.createProvider("zhipu", new ModelRoutingAdmin.ProviderDto(
+                "http://zhipu.example", "sk-zhipu", "/chat/completions", "openai", true, 60_000));
+        Map<String, Object> result = admin.updateRules(Map.of(
+                "default", List.of("zhipu/glm-4-flash", "zhipu/gpt-x")));
+        @SuppressWarnings("unchecked")
+        List<String> registered = (List<String>) result.get("registeredMissing");
+        assertThat(registered).containsExactly("zhipu/glm-4-flash", "zhipu/gpt-x");
+        ArgumentCaptor<RouteConfig> cap = ArgumentCaptor.forClass(RouteConfig.class);
+        verify(store, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        assertThat(cap.getValue().platforms().get("zhipu").models())
+                .anyMatch(m -> m.modelId().equals("gpt-x") && m.contextWindow() == 0
+                        && m.capabilities().equals(List.of("chat")));
     }
 
     @Test

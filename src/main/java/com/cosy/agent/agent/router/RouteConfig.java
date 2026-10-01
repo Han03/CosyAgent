@@ -96,11 +96,26 @@ public record RouteConfig(
     }
 
     /** 全部路由链引用的候选模型去重（catalog 数据源；保持声明顺序） */
+    /**
+     * 客户端模型选择器数据源（可执行集合）：
+     * 启用平台的已登记模型 + 路由规则引用的候选（去重并集）。
+     * 规则引用优先收敛（updateRules 自动登记），此处并集兜底保证
+     * 选择器恒包含"规则可执行"与"已登记"两类模型，与模型管理配置域一致。
+     */
     public List<String> catalogModels() {
         Set<String> models = new LinkedHashSet<>();
+        platforms.forEach((name, pf) -> {
+            if (pf.enabled()) {
+                pf.models().forEach(m -> models.add(name + "/" + m.modelId()));
+            }
+        });
         routes.forEach((type, candidates) -> candidates.forEach(c -> {
-            if (platforms.containsKey(c.substring(0, c.indexOf('/')))) {
-                models.add(c);
+            if (c != null && c.contains("/")) {
+                String platform = c.substring(0, c.indexOf('/'));
+                RouteConfig.ModelPlatform pf = platforms.get(platform);
+                if (pf != null && pf.enabled()) {
+                    models.add(c);
+                }
             }
         }));
         return new ArrayList<>(models);

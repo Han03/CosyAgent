@@ -219,9 +219,17 @@ public class ModelRoutingAdmin {
         replaceModels(name, models);
     }
 
-    /** 删除模型规格 */
+    /** 删除模型规格：被路由规则引用时拒绝（保证规则候选引用完整性） */
     public void deleteModel(String name, String modelId) {
         RouteConfig.ModelPlatform pf = platform(name);
+        RouteConfig cfg = router.currentConfig();
+        boolean referenced = cfg.routes().values().stream()
+                .flatMap(List::stream)
+                .anyMatch(c -> c != null && c.equals(name + "/" + modelId));
+        if (referenced) {
+            throw new BizException(ErrorCode.PARAM_ERROR,
+                    "模型被路由规则引用，请先从规则候选移除: " + modelId);
+        }
         List<RouteConfig.ModelSpec> models = new ArrayList<>(pf.models());
         boolean removed = models.removeIf(m -> m.modelId().equals(modelId));
         if (!removed) {
@@ -235,28 +243,51 @@ public class ModelRoutingAdmin {
         return new LinkedHashMap<>(router.currentConfig().routes());
     }
 
-    /** 路由规则整体更新（类型 → 有序候选链，顺序即降级顺序） */
-    public void updateRules(Map<String, List<String>> rules) {
+    /**
+     * 路由规则整体更新（类型 → 有序候选链，顺序即降级顺序）。
+     * 候选必须引用已注册平台；引用的模型未登记时自动补登记进该平台
+     * 模型规格（contextWindow=0、capabilities=["chat"] 占位，可在模型管理中补元数据），
+     * 保证规则候选与配置域恒一致。返回本次自动补登记的模型列表。
+     */
+    public Map<String, Object> updateRules(Map<String, List<String>> rules) {
         if (rules == null) {
-            return;
+            return Map.of();
         }
         RouteConfig cfg = router.currentConfig();
+        Map<String, RouteConfig.ModelPlatform> platforms = new LinkedHashMap<>(cfg.platforms());
         Map<String, List<String>> cleaned = new LinkedHashMap<>();
+        List<String> registeredMissing = new ArrayList<>();
         rules.forEach((type, candidates) -> {
             if (type == null || type.isBlank()) {
                 return;
             }
             List<String> list = candidates == null ? List.of()
                     : candidates.stream().filter(c -> c != null && !c.isBlank()).toList();
-            list.forEach(c -> {
-                String platform = c.substring(0, c.indexOf('/'));
-                if (!cfg.platforms().containsKey(platform)) {
+            for (String c : list) {
+                int idx = c.indexOf('/');
+                if (idx <= 0 || idx == c.length() - 1) {
+                    throw new BizException(ErrorCode.PARAM_ERROR, "候选格式必须为 平台/模型: " + c);
+                }
+                String platform = c.substring(0, idx);
+                String model = c.substring(idx + 1);
+                RouteConfig.ModelPlatform pf = platforms.get(platform);
+                if (pf == null) {
                     throw new BizException(ErrorCode.PARAM_ERROR, "候选平台未注册: " + c);
                 }
-            });
+                // 规则引用未登记模型 → 自动补登记（引用完整性收敛）
+                if (pf.models().stream().noneMatch(m -> m.modelId().equals(model))) {
+                    List<RouteConfig.ModelSpec> models = new ArrayList<>(pf.models());
+                    models.add(new RouteConfig.ModelSpec(model, 0, List.of("chat")));
+                    pf = new RouteConfig.ModelPlatform(pf.name(), pf.baseUrl(), pf.apiKey(),
+                            pf.completionsPath(), pf.type(), pf.enabled(), pf.timeoutMs(), models);
+                    platforms.put(platform, pf);
+                    registeredMissing.add(c);
+                }
+            }
             cleaned.put(type.trim(), list);
         });
-        persist(new RouteConfig(cfg.enabled(), cfg.maxCandidates(), cfg.platforms(), cleaned));
+        persist(new RouteConfig(cfg.enabled(), cfg.maxCandidates(), platforms, cleaned));
+        return registeredMissing.isEmpty() ? Map.of() : Map.of("registeredMissing", registeredMissing);
     }
 
     /** 连通性测试：对指定平台（+模型）发最小请求，返回耗时或可读错误（key 不出库） */

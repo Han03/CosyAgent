@@ -288,12 +288,11 @@ public class AgentController {
         return Result.ok(modelRoutingAdmin.getRules());
     }
 
-    /** 路由规则整体更新（顺序即降级顺序；候选平台必须已注册） */
+    /** 路由规则整体更新（顺序即降级顺序；候选平台必须已注册，未登记模型自动补登记） */
     @PutMapping("/model-routing/rules")
-    public Result<Boolean> updateModelRules(
+    public Result<Map<String, Object>> updateModelRules(
             @RequestBody Map<String, java.util.List<String>> rules) {
-        modelRoutingAdmin.updateRules(rules);
-        return Result.ok(Boolean.TRUE);
+        return Result.ok(modelRoutingAdmin.updateRules(rules));
     }
 
     /** 连通性测试：对指定平台（+模型）发最小请求，返回耗时或可读错误（key 不出库） */
