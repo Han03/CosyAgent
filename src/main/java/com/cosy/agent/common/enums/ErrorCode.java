@@ -24,7 +24,9 @@ public enum ErrorCode {
     CAPABILITY_NOT_FOUND(10013, "能力不存在或已摘除"),
     CAPABILITY_ALL_FAILED(10014, "能力全部候选调用失败"),
     CAPABILITY_PROVIDER_NOT_FOUND(10015, "能力提供者不存在"),
-    CAPABILITY_INVALID_MODE(10016, "非法注册模式（仅支持 ap/cp）");
+    CAPABILITY_INVALID_MODE(10016, "非法注册模式（仅支持 ap/cp）"),
+    NOT_FOUND(10017, "资源不存在"),
+    PARAM_ERROR(10018, "参数错误");
 
     private final int code;
     private final String message;

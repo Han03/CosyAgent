@@ -21,8 +21,9 @@ import java.util.Optional;
 
 /**
  * PostgreSQL 模型路由配置持久化（cosy.agent.model-routing.store=pg 时装配）：
- * 表 model_platform（平台：base-url / api-key）+ model_route（路由类型 → 有序候选），
- * 启动自建表；原生 JDBC（连接参数复用 cosy.agent.model-routing.pg.*，与 task store 同库同源）。
+ * 表 model_platform（平台：base-url / api-key[加密] / type / enabled / timeout_ms）、
+ * model_spec（平台下模型规格）、model_route（路由类型 → 有序候选）。
+ * api-key 经 {@link ApiKeyCipher} 加密落库、读取解密；旧表自动补列兼容。
  */
 @Component
 @ConditionalOnProperty(prefix = "cosy.agent.model-routing", name = "store", havingValue = "pg")
@@ -33,12 +34,14 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
     private final String url;
     private final String username;
     private final String password;
+    private final ApiKeyCipher cipher;
 
-    public JdbcModelRoutingConfigStore(ModelRoutingProperties properties) {
+    public JdbcModelRoutingConfigStore(ModelRoutingProperties properties, ApiKeyCipher cipher) {
         var pg = properties.pg();
         this.url = pg.url();
         this.username = pg.username();
         this.password = pg.password();
+        this.cipher = cipher;
         initSchema();
     }
 
@@ -52,7 +55,18 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
                     CREATE TABLE IF NOT EXISTS model_platform (
                         platform_name VARCHAR(64) PRIMARY KEY,
                         base_url      VARCHAR(512) NOT NULL,
-                        api_key       VARCHAR(256)
+                        api_key       VARCHAR(512),
+                        type          VARCHAR(32)  DEFAULT 'openai',
+                        enabled       BOOLEAN      DEFAULT TRUE,
+                        timeout_ms    INT          DEFAULT 60000
+                    )""");
+            conn.createStatement().execute("""
+                    CREATE TABLE IF NOT EXISTS model_spec (
+                        platform_name  VARCHAR(64)   NOT NULL,
+                        model_id       VARCHAR(128)  NOT NULL,
+                        context_window INT           DEFAULT 0,
+                        capabilities   VARCHAR(1024) DEFAULT '',
+                        PRIMARY KEY (platform_name, model_id)
                     )""");
             conn.createStatement().execute("""
                     CREATE TABLE IF NOT EXISTS model_route (
@@ -61,6 +75,18 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
                         seq         INT          NOT NULL,
                         PRIMARY KEY (route_type, candidate)
                     )""");
+            // 旧表补列（PG 支持 ADD COLUMN IF NOT EXISTS；重复列异常忽略）
+            for (String alter : List.of(
+                    "ALTER TABLE model_platform ADD COLUMN IF NOT EXISTS type VARCHAR(32) DEFAULT 'openai'",
+                    "ALTER TABLE model_platform ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE",
+                    "ALTER TABLE model_platform ADD COLUMN IF NOT EXISTS timeout_ms INT DEFAULT 60000",
+                    "ALTER TABLE model_platform ALTER COLUMN api_key TYPE VARCHAR(512)")) {
+                try {
+                    conn.createStatement().execute(alter);
+                } catch (SQLException ignored) {
+                    // 列已存在，忽略
+                }
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("初始化模型路由配置表失败（store=pg）: " + e.getMessage(), e);
         }
@@ -72,11 +98,17 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
             Map<String, RouteConfig.ModelPlatform> platforms = new LinkedHashMap<>();
             try (Statement st = conn.createStatement();
                  ResultSet rs = st.executeQuery(
-                         "SELECT platform_name, base_url, api_key FROM model_platform ORDER BY platform_name")) {
+                         "SELECT platform_name, base_url, api_key, type, enabled, timeout_ms FROM model_platform ORDER BY platform_name")) {
                 while (rs.next()) {
                     String name = rs.getString("platform_name");
                     platforms.put(name, new RouteConfig.ModelPlatform(
-                            name, rs.getString("base_url"), rs.getString("api_key"), null));
+                            name, rs.getString("base_url"),
+                            cipher.decrypt(rs.getString("api_key")),
+                            null,
+                            rs.getString("type"),
+                            rs.getBoolean("enabled"),
+                            rs.getInt("timeout_ms"),
+                            loadModels(conn, name)));
                 }
             }
             Map<String, List<String>> routes = new LinkedHashMap<>();
@@ -98,6 +130,24 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
         }
     }
 
+    private List<RouteConfig.ModelSpec> loadModels(Connection conn, String platformName) throws SQLException {
+        List<RouteConfig.ModelSpec> models = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT model_id, context_window, capabilities FROM model_spec WHERE platform_name = ? ORDER BY model_id")) {
+            ps.setString(1, platformName);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String caps = rs.getString("capabilities");
+                    List<String> capList = (caps == null || caps.isBlank())
+                            ? List.of() : List.of(caps.split(","));
+                    models.add(new RouteConfig.ModelSpec(rs.getString("model_id"),
+                            rs.getInt("context_window"), capList));
+                }
+            }
+        }
+        return models;
+    }
+
     @Override
     public void save(RouteConfig config) {
         try (Connection conn = open()) {
@@ -105,20 +155,39 @@ public class JdbcModelRoutingConfigStore implements ModelRoutingConfigStore, Dis
             try {
                 try (Statement st = conn.createStatement()) {
                     st.executeUpdate("DELETE FROM model_route");
+                    st.executeUpdate("DELETE FROM model_spec");
                     st.executeUpdate("DELETE FROM model_platform");
                 }
                 try (PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO model_platform (platform_name, base_url, api_key) VALUES (?, ?, ?)")) {
+                        "INSERT INTO model_platform (platform_name, base_url, api_key, type, enabled, timeout_ms) "
+                                + "VALUES (?, ?, ?, ?, ?, ?)")) {
                     config.platforms().forEach((name, pf) -> {
                         try {
                             ps.setString(1, name);
                             ps.setString(2, pf.baseUrl());
-                            ps.setString(3, pf.apiKey());
+                            ps.setString(3, cipher.encrypt(pf.apiKey()));
+                            ps.setString(4, pf.type());
+                            ps.setBoolean(5, pf.enabled());
+                            ps.setInt(6, pf.timeoutMs());
                             ps.executeUpdate();
                         } catch (SQLException e) {
                             throw new RuntimeException(e);
                         }
                     });
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO model_spec (platform_name, model_id, context_window, capabilities) VALUES (?, ?, ?, ?)")) {
+                    config.platforms().forEach((name, pf) -> pf.models().forEach(m -> {
+                        try {
+                            ps.setString(1, name);
+                            ps.setString(2, m.modelId());
+                            ps.setInt(3, m.contextWindow());
+                            ps.setString(4, String.join(",", m.capabilities()));
+                            ps.executeUpdate();
+                        } catch (SQLException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }));
                 }
                 try (PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO model_route (route_type, candidate, seq) VALUES (?, ?, ?)")) {

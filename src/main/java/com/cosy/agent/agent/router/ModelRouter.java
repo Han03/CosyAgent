@@ -68,6 +68,11 @@ public class ModelRouter {
         return config.get();
     }
 
+    /** 平台注册表（管理 API 连通性测试用） */
+    public ModelPlatformRegistry registry() {
+        return registry;
+    }
+
     /** 配置热更新：替换运行时配置并清空平台实例缓存 */
     public void refresh(RouteConfig updated) {
         config.set(updated);

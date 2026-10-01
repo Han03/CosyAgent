@@ -26,11 +26,33 @@ public record RouteConfig(
     public static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
 
     /** 平台注册项（name 为 Map key 冗余保留，便于序列化/校验） */
-    public record ModelPlatform(String name, String baseUrl, String apiKey, String completionsPath) {
+    public record ModelPlatform(String name, String baseUrl, String apiKey, String completionsPath,
+                                String type, boolean enabled, int timeoutMs, List<ModelSpec> models) {
 
         public ModelPlatform {
             completionsPath = (completionsPath == null || completionsPath.isBlank())
                     ? DEFAULT_COMPLETIONS_PATH : completionsPath;
+            type = (type == null || type.isBlank()) ? DEFAULT_PLATFORM_TYPE : type;
+            timeoutMs = timeoutMs <= 0 ? DEFAULT_TIMEOUT_MS : timeoutMs;
+            models = models == null ? List.of() : List.copyOf(models);
+        }
+
+        /** 兼容旧构造（未声明元数据时归一化默认值） */
+        public ModelPlatform(String name, String baseUrl, String apiKey, String completionsPath) {
+            this(name, baseUrl, apiKey, completionsPath, DEFAULT_PLATFORM_TYPE, true, DEFAULT_TIMEOUT_MS, List.of());
+        }
+    }
+
+    /** 平台类型默认值（OpenAI 兼容协议） */
+    public static final String DEFAULT_PLATFORM_TYPE = "openai";
+    /** 单请求超时默认值（毫秒） */
+    public static final int DEFAULT_TIMEOUT_MS = 60_000;
+
+    /** 平台下的模型规格（配置域元数据：上下文窗口/能力标签；路由候选仍为 "平台/模型" 字符串） */
+    public record ModelSpec(String modelId, int contextWindow, List<String> capabilities) {
+
+        public ModelSpec {
+            capabilities = capabilities == null ? List.of() : List.copyOf(capabilities);
         }
     }
 

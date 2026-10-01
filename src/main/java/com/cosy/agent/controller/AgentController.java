@@ -222,6 +222,87 @@ public class AgentController {
         return Result.ok(modelRoutingAdmin.catalog());
     }
 
+    // ---- 模型管理平台化：平台/模型/规则细粒度 CRUD + 连通性测试 ----
+
+    /** 平台列表（api-key 掩码 + 模型数） */
+    @GetMapping("/model-routing/providers")
+    public Result<java.util.List<Map<String, Object>>> modelProviders() {
+        return Result.ok(modelRoutingAdmin.listProviders());
+    }
+
+    /** 平台详情（含模型规格完整元数据） */
+    @GetMapping("/model-routing/providers/{name}")
+    public Result<Map<String, Object>> modelProviderDetail(@PathVariable String name) {
+        return Result.ok(modelRoutingAdmin.providerDetail(name));
+    }
+
+    /** 新增平台（api-key 必填一次，落库加密） */
+    @PostMapping("/model-routing/providers/{name}")
+    public Result<Boolean> createModelProvider(@PathVariable String name,
+            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ProviderDto dto) {
+        modelRoutingAdmin.createProvider(name, dto);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 更新平台（api-key 空 = 保持原值） */
+    @PutMapping("/model-routing/providers/{name}")
+    public Result<Boolean> updateModelProvider(@PathVariable String name,
+            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ProviderDto dto) {
+        modelRoutingAdmin.updateProvider(name, dto);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 删除平台（被路由规则引用时拒绝） */
+    @DeleteMapping("/model-routing/providers/{name}")
+    public Result<Boolean> deleteModelProvider(@PathVariable String name) {
+        modelRoutingAdmin.deleteProvider(name);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 平台下新增模型规格 */
+    @PostMapping("/model-routing/providers/{name}/models/{modelId}")
+    public Result<Boolean> addModel(@PathVariable String name, @PathVariable String modelId,
+            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ModelDto dto) {
+        modelRoutingAdmin.addModel(name, modelId, dto);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 更新模型规格 */
+    @PutMapping("/model-routing/providers/{name}/models/{modelId}")
+    public Result<Boolean> updateModel(@PathVariable String name, @PathVariable String modelId,
+            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ModelDto dto) {
+        modelRoutingAdmin.updateModel(name, modelId, dto);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 删除模型规格 */
+    @DeleteMapping("/model-routing/providers/{name}/models/{modelId}")
+    public Result<Boolean> deleteModel(@PathVariable String name, @PathVariable String modelId) {
+        modelRoutingAdmin.deleteModel(name, modelId);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 路由规则整体读取（类型 → 有序候选链） */
+    @GetMapping("/model-routing/rules")
+    public Result<Map<String, java.util.List<String>>> modelRules() {
+        return Result.ok(modelRoutingAdmin.getRules());
+    }
+
+    /** 路由规则整体更新（顺序即降级顺序；候选平台必须已注册） */
+    @PutMapping("/model-routing/rules")
+    public Result<Boolean> updateModelRules(
+            @RequestBody Map<String, java.util.List<String>> rules) {
+        modelRoutingAdmin.updateRules(rules);
+        return Result.ok(Boolean.TRUE);
+    }
+
+    /** 连通性测试：对指定平台（+模型）发最小请求，返回耗时或可读错误（key 不出库） */
+    @PostMapping("/model-routing/test")
+    public Result<Map<String, Object>> testModelConnection(
+            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.TestRequest request) {
+        return Result.ok(modelRoutingAdmin.testConnection(request.providerId(), request.modelId(), request.prompt()));
+    }
+
     /** 解析 X-Cosy-Mock 请求头：true/1/on → 开；false/0/off → 关；其他/缺失 → 回退全局配置 */
     private Boolean parseMock(String header) {
         if (header == null || header.isBlank()) {
