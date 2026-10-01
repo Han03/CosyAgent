@@ -47,6 +47,31 @@ class CapabilityRegistryTest {
                 os.write(body);
             }
         });
+        // submit-poll 三段协议 stub：提交 → 状态 success → 取结果
+        providerA.createContext("/api/submit", exchange -> {
+            byte[] body = "{\"task_id\":\"t-1\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        providerA.createContext("/api/status/t-1", exchange -> {
+            byte[] body = "{\"status\":\"success\",\"progress\":100}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        providerA.createContext("/api/result/t-1", exchange -> {
+            byte[] body = "{\"text\":\"合成完成\",\"history_id\":9}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
         providerA.start();
 
         providerB = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -194,5 +219,57 @@ class CapabilityRegistryTest {
         assertThatThrownBy(() -> registry.register(request("app-a", "http://127.0.0.1:1", "raft")))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("ap/cp");
+    }
+
+    @Test
+    void submitPoll_completesSubmitStatusResultProtocol() {
+        String url = "http://127.0.0.1:" + providerA.getAddress().getPort();
+        Capability longTask = new Capability("tts", "整章合成（长任务）", Map.of("script_id", "int"),
+                "/api/submit", "POST", false, "test",
+                Capability.MODE_SUBMIT_POLL, "/api/status/{id}", "/api/result/{id}", 100, 5_000);
+        registry.register(new CapabilityRegistry.RegisterRequest("app-a", url, "ap", "test", List.of(longTask)));
+
+        Object result = registry.call("test_tts", Map.of("script_id", 3));
+        assertThat(result.toString()).contains("合成完成").contains("history_id");
+    }
+
+    @Test
+    void submitPoll_statusFailed_marksCandidateDownAndFallsBack() throws IOException {
+        // A 的 submit 后状态始终 failed
+        HttpServer failing = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        failing.createContext("/api/submit", exchange -> {
+            byte[] body = "{\"task_id\":\"t-fail\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        failing.createContext("/api/status/t-fail", exchange -> {
+            byte[] body = "{\"status\":\"failed\",\"error\":\"synthesis error\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        failing.start();
+        try {
+            Capability longTask = new Capability("tts", "整章合成（长任务）", Map.of("script_id", "int"),
+                    "/api/submit", "POST", false, "test",
+                    Capability.MODE_SUBMIT_POLL, "/api/status/{id}", "/api/result/{id}", 50, 5_000);
+            registry.register(new CapabilityRegistry.RegisterRequest("app-a",
+                    "http://127.0.0.1:" + failing.getAddress().getPort(), "ap", "test", List.of(longTask)));
+            registry.register(new CapabilityRegistry.RegisterRequest("app-b",
+                    "http://127.0.0.1:" + providerA.getAddress().getPort(), "ap", "test",
+                    List.of(new Capability("tts", "整章合成（长任务）", Map.of("script_id", "int"),
+                            "/api/submit", "POST", false, "test",
+                            Capability.MODE_SUBMIT_POLL, "/api/status/{id}", "/api/result/{id}", 50, 5_000))));
+
+            Object result = registry.call("test_tts", Map.of("script_id", 3));
+            assertThat(result.toString()).contains("合成完成"); // 降级到 B 成功
+        } finally {
+            failing.stop(0);
+        }
     }
 }

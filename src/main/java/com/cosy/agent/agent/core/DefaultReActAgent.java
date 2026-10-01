@@ -183,7 +183,7 @@ public class DefaultReActAgent implements ReActAgent {
             for (AssistantMessage.ToolCall toolCall : toolCalls) {
                 emit(listener, AgentStreamEvent.tool(toolCall.id(), toolCall.name(), toolCall.arguments(), iterations));
                 long startNs = System.nanoTime();
-                AgentTool tool = toolRegistry.find(toolCall.name()).orElse(null);
+                AgentTool tool = resolveTool(toolCall.name());
                 Object result;
                 if (tool == null) {
                     result = Map.of("error", "未知工具: " + toolCall.name());
@@ -240,6 +240,31 @@ public class DefaultReActAgent implements ReActAgent {
         appendMemoryBlock(sb, "用户长期记忆", MemoryLevel.LONG_TERM, context.userId());
         appendKnowledgeBlock(sb, context, userInput);
         return sb.toString();
+    }
+
+    /** 工具名解析：先精确匹配，再容忍 LLM 改写（大小写/空格/以描述全文当工具名）。
+     * 根因兜底：部分模型（如 glm-4-flash）会返回工具描述而非名称，直接 find 会
+     * 丢给"未知工具"自愈；此处把描述→名映射后仍能正确执行。 */
+    private AgentTool resolveTool(String name) {
+        if (name == null) {
+            return null;
+        }
+        String raw = name.trim();
+        AgentTool exact = toolRegistry.find(raw).orElse(null);
+        if (exact != null) {
+            return exact;
+        }
+        for (AgentTool t : toolRegistry.all()) {
+            if (t.name().equalsIgnoreCase(raw)) {
+                log.info("工具名归一化匹配: {} -> {}", raw, t.name());
+                return t;
+            }
+            if (t.description() != null && t.description().trim().equals(raw)) {
+                log.info("工具名描述匹配: 模型以描述调用工具 {} -> {}", raw, t.name());
+                return t;
+            }
+        }
+        return null;
     }
 
     /** 请求级 Mock 判定：X-Cosy-Mock 请求头注入的覆盖值优先，缺失时回退全局配置；

@@ -5,6 +5,8 @@ import com.cosy.agent.agent.resilience.ResilienceTarget;
 import com.cosy.agent.agent.tool.ToolRegistry;
 import com.cosy.agent.common.enums.ErrorCode;
 import com.cosy.agent.common.exception.BizException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -53,6 +55,9 @@ public class CapabilityRegistry {
     private final CapabilityProperties properties;
     private final ResilienceSupport resilience;
     private final RestClient restClient;
+
+    /** 提交/轮询响应的 JSON 解析（Jackson 无状态、线程安全） */
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 一个"可调用的能力单元"：提供者 × 能力定义（候选链元素） */
     public record ActiveCapability(CapabilityProvider provider, Capability capability) {
@@ -110,7 +115,9 @@ public class CapabilityRegistry {
                         ? properties.namespace() : request.namespace())
                     : c.namespace();
             Capability full = new Capability(c.name(), c.description(), c.parameters(),
-                    c.endpointPath(), c.endpointMethod(), c.retryable(), namespace);
+                    c.endpointPath(), c.endpointMethod(), c.retryable(), namespace,
+                    c.endpointMode(), c.statusPath(), c.resultPath(),
+                    c.pollIntervalMs(), c.pollTimeoutMs());
             String fullName = full.fullName();
             // 工具名全局唯一：仅与"本地工具"冲突拒绝（能力 proxy 已存在 = 同能力多提供者，放行追加实例）
             boolean localConflict = toolRegistry.find(fullName)
@@ -190,6 +197,7 @@ public class CapabilityRegistry {
     /**
      * 调用远程能力（CapabilityProxyTool 委托）：候选链依次调用，
      * 失败标 DOWN → 切下一候选；全部失败抛 CAPABILITY_ALL_FAILED。
+     * 按能力 endpointMode 分流：sync 单次 HTTP；submit-poll 提交→轮询→取结果。
      */
     public Object call(String capabilityName, Map<String, Object> args) {
         List<ActiveCapability> chain = resolve(capabilityName);
@@ -207,6 +215,13 @@ public class CapabilityRegistry {
         }
         throw new BizException(ErrorCode.CAPABILITY_ALL_FAILED,
                 capabilityName + " 全部候选失败: " + failures);
+    }
+
+    /** 按能力模式分流：submit-poll 走长任务三步协议，否则单次 HTTP */
+    private Object invoke(CapabilityProvider provider, Capability capability, Map<String, Object> args) {
+        return capability.isSubmitPoll()
+                ? invokeSubmitPoll(provider, capability, args)
+                : invokeSync(provider, capability, args);
     }
 
     /** 调用失败标记：AP 立即 DOWN（候选链跳过），CP 标 DOWN 保留（探测恢复） */
@@ -315,6 +330,14 @@ public class CapabilityRegistry {
                 && byProvider.values().iterator().next().retryable();
     }
 
+    /** 调用模式（sync / submit-poll），健康目录展示用；无能力时返回 sync */
+    public String modeOf(String capabilityName) {
+        Map<String, Capability> byProvider = capabilities.get(capabilityName);
+        return byProvider == null || byProvider.isEmpty()
+                ? Capability.MODE_SYNC
+                : byProvider.values().iterator().next().endpointMode();
+    }
+
     /** 寻址但不抛异常（健康目录/代理元数据用）：无能力时返回空链 */
     public List<ActiveCapability> resolveQuietly(String capabilityName) {
         try {
@@ -345,8 +368,8 @@ public class CapabilityRegistry {
         }
     }
 
-    private Object invoke(CapabilityProvider provider, Capability capability, Map<String, Object> args) {
-        // 外层 call() 已对每个候选套 ResilienceTarget.TOOL 容错，此处只做 HTTP 调用
+    /** sync：单次 HTTP 调用（外层 call() 已对每个候选套 ResilienceTarget.TOOL 容错） */
+    private Object invokeSync(CapabilityProvider provider, Capability capability, Map<String, Object> args) {
         String url = provider.baseUrl().replaceAll("/+$", "") + capability.endpointPath();
         boolean isGet = "GET".equalsIgnoreCase(capability.endpointMethod());
         if (isGet && args != null && !args.isEmpty()) {
@@ -367,6 +390,89 @@ public class CapabilityRegistry {
                     .retrieve().body(String.class);
         }
         return body == null ? Map.of() : body;
+    }
+
+    /**
+     * submit-poll 三步协议：提交长任务 → 轮询状态至终态 → 取完整结果。
+     * 全程仍在候选链容错内：提交/轮询失败由外层标 DOWN 切下一候选。
+     */
+    private Object invokeSubmitPoll(CapabilityProvider provider, Capability capability, Map<String, Object> args) {
+        if (capability.statusPath() == null || capability.statusPath().isBlank()
+                || capability.resultPath() == null || capability.resultPath().isBlank()) {
+            throw new IllegalStateException("submit-poll 能力必须配置 statusPath/resultPath: " + capability.fullName());
+        }
+        String base = provider.baseUrl().replaceAll("/+$", "");
+        // 1) 提交
+        String submitResp = restClient.post().uri(base + capability.endpointPath())
+                .header("X-Capability-Call-Token", provider.callToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(args == null ? Map.of() : args)
+                .retrieve().body(String.class);
+        String taskId = extractTaskId(submitResp);
+        if (taskId == null || taskId.isBlank()) {
+            throw new IllegalStateException("提交响应缺少 task_id: " + submitResp);
+        }
+        String statusPath = capability.statusPath().replace("{id}", taskId);
+        String resultPath = capability.resultPath().replace("{id}", taskId);
+        // 2) 轮询至终态
+        long deadline = System.currentTimeMillis() + capability.pollTimeoutMs();
+        while (System.currentTimeMillis() < deadline) {
+            sleepQuietly(capability.pollIntervalMs());
+            String statusResp = restClient.get().uri(base + statusPath)
+                    .header("X-Capability-Call-Token", provider.callToken())
+                    .retrieve().body(String.class);
+            String status = extractStatus(statusResp);
+            if ("success".equalsIgnoreCase(status)) {
+                // 3) 成功 → 取完整结果
+                String result = restClient.get().uri(base + resultPath)
+                        .header("X-Capability-Call-Token", provider.callToken())
+                        .retrieve().body(String.class);
+                return result == null ? Map.of() : result;
+            }
+            if ("failed".equalsIgnoreCase(status)) {
+                throw new IllegalStateException("长任务失败: " + statusResp);
+            }
+            // pending / running：继续轮询
+        }
+        throw new IllegalStateException("长任务轮询超时(" + capability.pollTimeoutMs() + "ms)，"
+                + "任务可能仍在运行: taskId=" + taskId);
+    }
+
+    private static void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private String extractTaskId(String resp) {
+        if (resp == null) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(resp);
+            JsonNode v = node.get("task_id");
+            if (v == null) {
+                v = node.get("taskId");
+            }
+            return v == null ? null : v.asText();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String extractStatus(String resp) {
+        if (resp == null) {
+            return "";
+        }
+        try {
+            JsonNode node = objectMapper.readTree(resp);
+            JsonNode v = node.get("status");
+            return v == null ? "" : v.asText();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private CapabilityProvider withStatus(CapabilityProvider p, CapabilityStatus status) {
