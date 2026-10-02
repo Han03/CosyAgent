@@ -9,9 +9,12 @@ public final class LLMCallContext {
 
     private static final ThreadLocal<Context> CTX = new ThreadLocal<>();
 
-    /** 业务关联信息（全可空：null 字段在记录中留空） */
-    public record Context(String sessionId, String taskId, int iteration, String toolName) {
-        public static final Context EMPTY = new Context(null, null, 0, null);
+    /** 业务关联信息（全可空：null 字段在记录中留空）。
+     *  injectedTools：本轮注入给模型的工具清单（逗号分隔工具名），用于调用记录排查
+     *  "模型是否看到某工具"；null 表示未采集（不阻断）。 */
+    public record Context(String sessionId, String taskId, int iteration, String toolName,
+                          String injectedTools) {
+        public static final Context EMPTY = new Context(null, null, 0, null, null);
     }
 
     private LLMCallContext() {

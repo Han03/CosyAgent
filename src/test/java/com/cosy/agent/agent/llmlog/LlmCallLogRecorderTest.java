@@ -57,7 +57,7 @@ class LlmCallLogRecorderTest {
     @Test
     void successPath_recordsPlainContentAttemptsAndUsage() {
         CallRecorder recorder = recorder();
-        LLMCallContext.set(new LLMCallContext.Context("s-1", "t-1", 3, null));
+        LLMCallContext.set(new LLMCallContext.Context("s-1", "t-1", 3, null, "toolA,toolB"));
         String traceId = recorder.beginCall("auto", "default",
                 List.of("p1/m1", "p1/m2"), "task-tag: reasoning", "用户问题");
         recorder.attemptFailed(traceId, "p1/m1", "连接失败: boom");

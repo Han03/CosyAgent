@@ -57,7 +57,8 @@ public class CallRecorder {
                     ctx.iteration(), ctx.toolName(), routeType == null ? "default" : routeType,
                     modelChoice == null || modelChoice.isBlank() ? "auto" : modelChoice,
                     candidateChain == null ? List.of() : candidateChain,
-                    decisionRationale, properties.applyContent(promptContent), Instant.now());
+                    decisionRationale, ctx.injectedTools(), properties.applyContent(promptContent),
+                    Instant.now());
             pending.put(traceId, pc);
             return traceId;
         } catch (RuntimeException e) {
@@ -106,7 +107,7 @@ public class CallRecorder {
         LlmCallLog entry = new LlmCallLog(
                 pc.traceId, pc.sessionId, pc.taskId, pc.iteration, pc.toolName,
                 pc.routeType, pc.modelChoice, String.join(",", pc.candidateChain),
-                String.join(",", pc.attempts),
+                pc.injectedTools, String.join(",", pc.attempts),
                 pc.reasons.isEmpty() ? null : "[" + String.join(",", pc.reasons) + "]",
                 pc.chosenModel,
                 success ? LlmCallLog.STATUS_SUCCESS : LlmCallLog.STATUS_FAILED,
@@ -145,6 +146,7 @@ public class CallRecorder {
         final String routeType;
         final String modelChoice;
         final List<String> candidateChain;
+        final String injectedTools;
         final List<String> attempts = new ArrayList<>();
         final List<String> reasons = new ArrayList<>();
         final String decisionRationale;
@@ -159,7 +161,8 @@ public class CallRecorder {
 
         PendingCall(String traceId, String sessionId, String taskId, int iteration, String toolName,
                     String routeType, String modelChoice, List<String> candidateChain,
-                    String decisionRationale, String promptContent, Instant startedAt) {
+                    String decisionRationale, String injectedTools, String promptContent,
+                    Instant startedAt) {
             this.traceId = traceId;
             this.sessionId = sessionId;
             this.taskId = taskId;
@@ -168,6 +171,7 @@ public class CallRecorder {
             this.routeType = routeType;
             this.modelChoice = modelChoice;
             this.candidateChain = candidateChain;
+            this.injectedTools = injectedTools;
             this.decisionRationale = decisionRationale;
             this.promptContent = promptContent;
             this.startedAt = startedAt;

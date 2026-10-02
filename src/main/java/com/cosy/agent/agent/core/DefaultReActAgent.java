@@ -154,9 +154,11 @@ public class DefaultReActAgent implements ReActAgent {
         for (int i = 0; i < context.maxIterations(); i++) {
             iterations++;
             emit(listener, AgentStreamEvent.thinking(iterations));
-            // 调用记录上下文：本轮的会话/任务/轮次关联（ModelRouter 埋点读取）
+            // 调用记录上下文：本轮的会话/任务/轮次/注入工具清单关联（ModelRouter 埋点读取）
             LLMCallContext.set(new LLMCallContext.Context(
-                    context.sessionId(), taskId, iterations, null));
+                    context.sessionId(), taskId, iterations, null,
+                    toolRegistry.all().stream().map(AgentTool::name)
+                            .collect(java.util.stream.Collectors.joining(","))));
             boolean useMock = isMockActive(context);
             ChatResponse response;
             try {

@@ -13,6 +13,7 @@ import java.time.Instant;
  * @param routeType         路由类型（default/reasoning/auto）
  * @param modelChoice       调用方选择（auto 或 平台/模型）
  * @param candidateChain    候选链快照（决策后）
+ * @param injectedTools     本轮注入给模型的工具清单（逗号分隔工具名；排查"模型是否看到某工具"）
  * @param attempts          实际尝试序列（逗号分隔）
  * @param reasons           降级原因列表（JSON 数组字符串）
  * @param chosenModel       最终命中（平台/模型；null=全部失败）
@@ -37,6 +38,7 @@ public record LlmCallLog(
         String routeType,
         String modelChoice,
         String candidateChain,
+        String injectedTools,
         String attempts,
         String reasons,
         String chosenModel,
