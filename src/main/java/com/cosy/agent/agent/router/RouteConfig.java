@@ -52,11 +52,36 @@ public record RouteConfig(
     /** 单请求超时默认值（毫秒） */
     public static final int DEFAULT_TIMEOUT_MS = 60_000;
 
-    /** 平台下的模型规格（配置域元数据：上下文窗口/能力标签；路由候选仍为 "平台/模型" 字符串） */
-    public record ModelSpec(String modelId, int contextWindow, List<String> capabilities) {
+    /**
+     * 平台下的模型规格（配置域元数据 + L2 画像字段）。
+     *
+     * @param modelId      模型标识（如 gpt-4o-mini）
+     * @param contextWindow 上下文窗口（token）；0 = 未登记（L2 上下文匹配按可覆盖处理）
+     * @param capabilities 能力标签（chat/tool/reasoning/fast/cheap…）
+     * @param speed        响应速度档位 1-5（5=最快；默认 3）
+     * @param reasoning    推理强度档位 1-5（5=最强；默认 3）
+     * @param toolSupport  工具调用稳定度 1-5（默认 3）
+     * @param priceTier    成本档位 1-5（5=最贵；默认 2）
+     */
+    public record ModelSpec(String modelId, int contextWindow, List<String> capabilities,
+                            int speed, int reasoning, int toolSupport, int priceTier) {
 
         public ModelSpec {
             capabilities = capabilities == null ? List.of() : List.copyOf(capabilities);
+            speed = speed <= 0 ? 3 : speed;
+            reasoning = reasoning <= 0 ? 3 : reasoning;
+            toolSupport = toolSupport <= 0 ? 3 : toolSupport;
+            priceTier = priceTier <= 0 ? 2 : priceTier;
+        }
+
+        /** 兼容旧构造（未声明画像时归一化默认值） */
+        public ModelSpec(String modelId, int contextWindow, List<String> capabilities) {
+            this(modelId, contextWindow, capabilities, 3, 3, 3, 2);
+        }
+
+        /** 未登记画像时的中性画像（L2 打分的兜底值） */
+        public static ModelSpec unknown(String modelId) {
+            return new ModelSpec(modelId, 0, List.of("chat"));
         }
     }
 

@@ -31,10 +31,13 @@ public class ModelRoutingAdmin {
 
     private final ModelRouter router;
     private final ModelRoutingConfigStore store;
+    private final AutoConfigHolder autoHolder;
 
-    public ModelRoutingAdmin(ModelRouter router, ModelRoutingConfigStore store) {
+    public ModelRoutingAdmin(ModelRouter router, ModelRoutingConfigStore store,
+                             AutoConfigHolder autoHolder) {
         this.router = router;
         this.store = store;
+        this.autoHolder = autoHolder;
     }
 
     // ---- 兼容旧管理 API（全量读/写 + catalog，行为不变） ----
@@ -55,7 +58,10 @@ public class ModelRoutingAdmin {
                 "enabled", cfg.enabled(),
                 "maxCandidates", cfg.maxCandidates(),
                 "platforms", platforms,
-                "routes", cfg.routes());
+                "routes", cfg.routes(),
+                "autoResolver", autoHolder.current().resolver(),
+                "autoRules", autoHolder.current().rules(),
+                "scoringWeights", autoHolder.current().weights());
     }
 
     /** 全量更新配置：api-key 字段为空/缺失 = 保持原值；保存到 store 并热更新 Router */
@@ -83,6 +89,20 @@ public class ModelRoutingAdmin {
         Map<String, List<String>> routes = request.routes() != null ? request.routes() : current.routes();
 
         persist(new RouteConfig(enabled, max, platforms, routes));
+        // v2.1 自动路由策略热更新（auto 段随管理 API 一并下发；不随 store 持久化，重启回 YAML）
+        if (request.autoResolver() != null || request.autoRules() != null || request.scoringWeights() != null) {
+            AutoConfig autoNow = autoHolder.current();
+            String resolver = request.autoResolver() != null ? request.autoResolver() : autoNow.resolver();
+            List<AutoConfig.AutoRule> rules = request.autoRules() != null
+                    ? request.autoRules().stream()
+                            .map(r -> new AutoConfig.AutoRule(r.tag(), r.minTools(),
+                                    r.maxTokenRatio(), r.keywords()))
+                            .toList()
+                    : autoNow.rules();
+            Map<String, Double> weights = request.scoringWeights() != null
+                    ? request.scoringWeights() : autoNow.weights();
+            autoHolder.refresh(new AutoConfig(resolver, rules, weights));
+        }
     }
 
     /** 客户端模型选择器数据源：auto + 可用模型 + 路由类型 */
@@ -394,9 +414,17 @@ public class ModelRoutingAdmin {
             Boolean enabled,
             Integer maxCandidates,
             Map<String, PlatformDto> platforms,
-            Map<String, List<String>> routes) {
+            Map<String, List<String>> routes,
+            String autoResolver,
+            List<AutoRuleDto> autoRules,
+            Map<String, Double> scoringWeights) {
 
         public record PlatformDto(String baseUrl, String apiKey, String completionsPath) {
+        }
+
+        /** 自动路由规则（L1 任务标签；与 YAML auto-rules 同构） */
+        public record AutoRuleDto(String tag, Integer minTools, Double maxTokenRatio,
+                                  List<String> keywords) {
         }
     }
 }

@@ -92,6 +92,29 @@ cosy:
           - openrouter/stealth/ox-alpha
           - volcengine/doubao-seed-2-1-pro-260628
         reasoning:
+      # 自动路由决策层（v2.1）：auto 且未显式指定路由类型时按任务动态决策。
+      # 档位 auto-resolver: static（现状静态链）| task-tag（L1 标签路由）| scoring（L2 画像打分排序）。
+      # 管理 API PUT /api/agent/model-routing 可热更新本段（不随 store 持久化，重启回 YAML）。
+      auto-resolver: ${COSY_MODEL_ROUTING_AUTO_RESOLVER:static}
+      auto-rules:                       # L1 规则表：配置顺序=优先级，首个命中生效
+        - tag: long-context             # 上下文规模超链内窗口 60%（比例可配）
+          min-tools: 0
+          max-token-ratio: 0.6
+          keywords: []
+        - tag: tool-heavy               # 工具数量 ≥ 3（工具调用密集）
+          min-tools: 3
+          max-token-ratio: 0
+          keywords: []
+        - tag: reasoning                # 用户意图命中推理特征
+          min-tools: 0
+          max-token-ratio: 0
+          keywords: ["为什么", "推导", "证明", "分析", "解释", "代码", "算法", "why", "explain", "derive", "prove", "analyze"]
+        - tag: creative                 # 用户意图命中创作特征
+          min-tools: 0
+          max-token-ratio: 0
+          keywords: ["写", "创作", "故事", "文案", "润色", "小说", "诗句", "write", "story", "creative", "poem"]
+      # scoring 档位的打分权重（缺省键用默认：reasoning .3 / tools .2 / context .2 / reliability .15 / speed .1 / price .05）
+      # scoring-weights: { reasoning: 0.3, tools: 0.2, context: 0.2, reliability: 0.15, speed: 0.1, price: 0.05 }
       pg:
         # store=pg 时生效（原生 JDBC，与 task store 同库同源）
         url: ${COSY_MODEL_ROUTING_PG_URL:jdbc:postgresql://localhost:5432/cosy}

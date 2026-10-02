@@ -15,6 +15,9 @@ import java.util.Map;
  * @param store         配置持久化实现：memory（默认，重启回 YAML 基线）| pg | mysql
  * @param platforms     模型平台注册表（name → base-url / api-key）
  * @param routes        路由类型 → 有序候选链（"平台/模型" 列表，降级顺序）
+ * @param autoResolver  自动路由档位（v2.1）：static | task-tag | scoring（默认 static=现状）
+ * @param autoRules     L1 任务标签规则表（配置顺序=优先级；结构化字段不写死代码）
+ * @param scoringWeights L2 打分权重（reasoning/tools/context/reliability/speed/price；缺省用默认）
  * @param pg            store=pg 时的连接参数（与 task store 同库同源）
  * @param mysql         store=mysql 时的连接参数
  */
@@ -25,6 +28,9 @@ public record ModelRoutingProperties(
         @DefaultValue("memory") String store,
         Map<String, Platform> platforms,
         Map<String, List<String>> routes,
+        @DefaultValue("static") String autoResolver,
+        List<AutoRule> autoRules,
+        Map<String, Double> scoringWeights,
         @NestedConfigurationProperty Pg pg,
         @NestedConfigurationProperty Mysql mysql) {
 
@@ -36,6 +42,12 @@ public record ModelRoutingProperties(
      */
     public record Platform(String baseUrl, String apiKey,
                            @DefaultValue("/v1/chat/completions") String completionsPath) {
+    }
+
+    /** L1 任务标签规则（与 AutoConfig.AutoRule 同构，绑定 YAML 自动段） */
+    public record AutoRule(String tag, @DefaultValue("0") int minTools,
+                           @DefaultValue("0.6") double maxTokenRatio,
+                           List<String> keywords) {
     }
 
     public record Pg(

@@ -45,7 +45,7 @@ class ModelRoutingAdminTest {
             state.set(inv.getArgument(0));
             return null;
         }).when(router).refresh(any(RouteConfig.class));
-        admin = new ModelRoutingAdmin(router, store);
+        admin = new ModelRoutingAdmin(router, store, new AutoConfigHolder(AutoConfig.defaults()));
     }
 
     @Test

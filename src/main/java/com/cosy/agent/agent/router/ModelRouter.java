@@ -38,6 +38,7 @@ public class ModelRouter {
     private final ModelPlatformRegistry registry;
     private final com.cosy.agent.agent.tool.ToolRegistry toolRegistry; // 可空：null 时工具取 templateOptions 快照
     private final AtomicReference<RouteConfig> config;
+    private AutoRouter autoRouter; // 可空：auto 决策层（v2.1）；null 时 auto 走静态链（现状）
 
     public ModelRouter(ChatModel defaultChatModel, OpenAiChatOptions templateOptions,
                        ResilienceSupport resilience, RouteConfig baseline) {
@@ -66,6 +67,11 @@ public class ModelRouter {
     /** 当前运行时配置（管理 API 读取用） */
     public RouteConfig currentConfig() {
         return config.get();
+    }
+
+    /** 装配自动路由决策层（v2.1；未装配时 auto 走静态链，行为与 v2.0 一致） */
+    public void setAutoRouter(AutoRouter autoRouter) {
+        this.autoRouter = autoRouter;
     }
 
     /** 平台注册表（管理 API 连通性测试用） */
@@ -105,7 +111,22 @@ public class ModelRouter {
             return RouteResult.direct(resp, "default");
         }
 
-        List<String> candidates = cfg.resolveCandidates(modelChoice, routeType);
+        List<String> candidates;
+        boolean auto = modelChoice == null || modelChoice.isBlank()
+                || "auto".equalsIgnoreCase(modelChoice.trim());
+        boolean explicitType = routeType != null && !routeType.isBlank();
+        if (auto && !explicitType && autoRouter != null) {
+            // v2.1 自动路由决策层：auto 且未显式指定类型 → 决策器选链/排序
+            RouteContext ctx = new RouteContext(modelChoice, routeType,
+                    prompt.getInstructions(), dynamicTools(), 0);
+            RouteDecision decision = autoRouter.decide(ctx);
+            candidates = decision.candidates();
+            if (candidates.isEmpty()) {
+                candidates = cfg.resolveCandidates(modelChoice, routeType); // 决策空链回退静态
+            }
+        } else {
+            candidates = cfg.resolveCandidates(modelChoice, routeType);
+        }
         if (candidates.isEmpty()) {
             // 路由链为空：退化为默认单模型（如平台未配置）
             log.warn("模型路由候选链为空（routes 未配置），回退默认模型: choice={}", modelChoice);
