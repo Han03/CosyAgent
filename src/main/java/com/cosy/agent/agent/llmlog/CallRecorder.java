@@ -46,7 +46,8 @@ public class CallRecorder {
 
     // ---- 采集（业务线程调用，零阻塞） ----
 
-    /** 一次调用开始；返回 traceId（null=记录不可用） */
+    /** 一次调用开始；返回 traceId（null=记录不可用）。
+     *  数据归一化：未指定模型（null/空）统一记为 "auto"，与路由语义一致，保证 NOT NULL 列可落库。 */
     public String beginCall(String modelChoice, String routeType, List<String> candidateChain,
                             String decisionRationale, String promptContent) {
         try {
@@ -54,7 +55,8 @@ public class CallRecorder {
             String traceId = UUID.randomUUID().toString().replace("-", "");
             PendingCall pc = new PendingCall(traceId, ctx.sessionId(), ctx.taskId(),
                     ctx.iteration(), ctx.toolName(), routeType == null ? "default" : routeType,
-                    modelChoice, candidateChain == null ? List.of() : candidateChain,
+                    modelChoice == null || modelChoice.isBlank() ? "auto" : modelChoice,
+                    candidateChain == null ? List.of() : candidateChain,
                     decisionRationale, properties.applyContent(promptContent), Instant.now());
             pending.put(traceId, pc);
             return traceId;
