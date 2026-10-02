@@ -1,5 +1,6 @@
 package com.cosy.agent.config;
 
+import com.cosy.agent.agent.llmlog.CallRecorder;
 import com.cosy.agent.agent.router.AutoConfig;
 import com.cosy.agent.agent.router.AutoConfigHolder;
 import com.cosy.agent.agent.router.AutoRouter;
@@ -12,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -34,7 +36,8 @@ public class ModelRoutingConfig {
                                    com.cosy.agent.agent.resilience.ResilienceSupport resilience,
                                    ModelRoutingConfigStore configStore,
                                    com.cosy.agent.agent.tool.ToolRegistry toolRegistry,
-                                   AutoRouter autoRouter) {
+                                   AutoRouter autoRouter,
+                                   ObjectProvider<CallRecorder> recorderProvider) {
         RouteConfig baseline = RouteConfig.fromProperties(properties);
         RouteConfig initial = configStore.load().orElse(baseline);
         if (configStore.load().isPresent()) {
@@ -44,6 +47,12 @@ public class ModelRoutingConfig {
         ModelRouter router = new ModelRouter(defaultChatModel, agentChatOptions, resilience, initial,
                 new com.cosy.agent.agent.router.ModelPlatformRegistry(agentChatOptions), toolRegistry);
         router.setAutoRouter(autoRouter);
+        // 调用记录器（llmlog.enabled=false 或装配失败时 getIfAvailable 返回 null → 不记录）
+        CallRecorder recorder = recorderProvider.getIfAvailable();
+        if (recorder != null) {
+            router.setRecorder(recorder);
+            log.info("模型路由调用记录已启用（旁路采集 llm_call_log）");
+        }
         log.info("模型路由初始化: enabled={}, routes={}, autoResolver={}",
                 initial.enabled(), initial.routes().keySet(), properties.autoResolver());
         return router;

@@ -1,5 +1,6 @@
 package com.cosy.agent.agent.core;
 
+import com.cosy.agent.agent.llmlog.LLMCallContext;
 import com.cosy.agent.agent.memory.MemoryLevel;
 import com.cosy.agent.agent.memory.MemoryRecord;
 import com.cosy.agent.agent.memory.MemoryStore;
@@ -117,6 +118,18 @@ public class DefaultReActAgent implements ReActAgent {
     public AgentResult run(AgentContext context, String userInput, List<AgentMessage> history,
                            AgentEventListener listener) {
         long start = System.currentTimeMillis();
+        Object taskIdAttr = context.attributes().get("taskId");
+        String taskId = taskIdAttr != null ? taskIdAttr.toString() : null;
+        try {
+            return doRun(context, userInput, history, listener, taskId, start);
+        } finally {
+            // 清理调用记录上下文，防止 ThreadLocal 泄漏（池化线程复用）
+            LLMCallContext.clear();
+        }
+    }
+
+    private AgentResult doRun(AgentContext context, String userInput, List<AgentMessage> history,
+                              AgentEventListener listener, String taskId, long start) {
 
         List<Message> messages = new ArrayList<>();
         messages.add(new SystemMessage(buildSystemPrompt(context, userInput)));
@@ -141,6 +154,9 @@ public class DefaultReActAgent implements ReActAgent {
         for (int i = 0; i < context.maxIterations(); i++) {
             iterations++;
             emit(listener, AgentStreamEvent.thinking(iterations));
+            // 调用记录上下文：本轮的会话/任务/轮次关联（ModelRouter 埋点读取）
+            LLMCallContext.set(new LLMCallContext.Context(
+                    context.sessionId(), taskId, iterations, null));
             boolean useMock = isMockActive(context);
             ChatResponse response;
             try {
@@ -215,8 +231,6 @@ public class DefaultReActAgent implements ReActAgent {
 
         persistMemory(context, userInput, answer, state);
 
-        Object taskIdAttr = context.attributes().get("taskId");
-        String taskId = taskIdAttr != null ? taskIdAttr.toString() : null;
         return new AgentResult(context.sessionId(), answer, state, List.copyOf(trace), iterations,
                 System.currentTimeMillis() - start, errorMessage, taskId);
     }

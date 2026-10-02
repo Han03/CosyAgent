@@ -1,5 +1,6 @@
 package com.cosy.agent.agent.router;
 
+import com.cosy.agent.agent.llmlog.CallRecorder;
 import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.resilience.ResilienceTarget;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -12,11 +13,13 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * 模型路由引擎（模型路由 v2）：解析调用选择（auto / 指定模型）→ 候选链 →
@@ -39,6 +42,7 @@ public class ModelRouter {
     private final com.cosy.agent.agent.tool.ToolRegistry toolRegistry; // 可空：null 时工具取 templateOptions 快照
     private final AtomicReference<RouteConfig> config;
     private AutoRouter autoRouter; // 可空：auto 决策层（v2.1）；null 时 auto 走静态链（现状）
+    private CallRecorder recorder; // 可空：调用记录器（旁路采集，不装配时零影响）
 
     public ModelRouter(ChatModel defaultChatModel, OpenAiChatOptions templateOptions,
                        ResilienceSupport resilience, RouteConfig baseline) {
@@ -72,6 +76,11 @@ public class ModelRouter {
     /** 装配自动路由决策层（v2.1；未装配时 auto 走静态链，行为与 v2.0 一致） */
     public void setAutoRouter(AutoRouter autoRouter) {
         this.autoRouter = autoRouter;
+    }
+
+    /** 装配调用记录器（旁路；未装配时模型调用不产生记录） */
+    public void setRecorder(CallRecorder recorder) {
+        this.recorder = recorder;
     }
 
     /** 平台注册表（管理 API 连通性测试用） */
@@ -112,6 +121,7 @@ public class ModelRouter {
         }
 
         List<String> candidates;
+        String rationale = null;
         boolean auto = modelChoice == null || modelChoice.isBlank()
                 || "auto".equalsIgnoreCase(modelChoice.trim());
         boolean explicitType = routeType != null && !routeType.isBlank();
@@ -121,6 +131,7 @@ public class ModelRouter {
                     prompt.getInstructions(), dynamicTools(), 0);
             RouteDecision decision = autoRouter.decide(ctx);
             candidates = decision.candidates();
+            rationale = decision.rationale();
             if (candidates.isEmpty()) {
                 candidates = cfg.resolveCandidates(modelChoice, routeType); // 决策空链回退静态
             }
@@ -134,30 +145,96 @@ public class ModelRouter {
             return RouteResult.direct(resp, "default");
         }
 
+        // ---- 调用记录埋点（旁路）：begin → 候选 attempt → end ----
+        String traceId = recorder == null ? null
+                : recorder.beginCall(modelChoice, routeType, candidates, rationale, promptText(prompt));
         List<String> attempts = new ArrayList<>();
         List<String> reasons = new ArrayList<>();
         RuntimeException lastFailure = null;
-        for (String candidate : candidates) {
-            attempts.add(candidate);
-            try {
-                ChatResponse resp = callCandidate(cfg, candidate, prompt);
-                if (!reasons.isEmpty()) {
-                    log.info("模型路由降级命中: choice={}, attempts={}, reasons={}, chosen={}",
-                            modelChoice, attempts, reasons, candidate);
+        try {
+            for (String candidate : candidates) {
+                attempts.add(candidate);
+                long attemptStart = System.currentTimeMillis();
+                try {
+                    ChatResponse resp = callCandidate(cfg, candidate, prompt);
+                    recordSuccess(traceId, candidate, resp, System.currentTimeMillis() - attemptStart);
+                    if (!reasons.isEmpty()) {
+                        log.info("模型路由降级命中: choice={}, attempts={}, reasons={}, chosen={}",
+                                modelChoice, attempts, reasons, candidate);
+                    }
+                    return RouteResult.ok(resp, candidate, attempts, reasons);
+                } catch (RuntimeException e) {
+                    if (!isFallbackable(e)) {
+                        throw e; // 不可降级异常（如 4xx/参数错误）：立即终止，不切换候选
+                    }
+                    String reason = classify(e);
+                    reasons.add(reason);
+                    if (traceId != null) {
+                        recorder.attemptFailed(traceId, candidate, reason);
+                    }
+                    lastFailure = e;
+                    log.warn("模型路由候选失败，切换下一候选: candidate={}, reason={}", candidate, reason);
                 }
-                return RouteResult.ok(resp, candidate, attempts, reasons);
-            } catch (RuntimeException e) {
-                if (!isFallbackable(e)) {
-                    throw e; // 不可降级异常（如 4xx/参数错误）：立即终止，不切换候选
-                }
-                String reason = classify(e);
-                reasons.add(reason);
-                lastFailure = e;
-                log.warn("模型路由候选失败，切换下一候选: candidate={}, reason={}", candidate, reason);
             }
+            log.error("模型路由全部候选失败: choice={}, candidates={}, reasons={}",
+                    modelChoice, candidates, reasons);
+            throw new IllegalStateException("所有模型候选均调用失败: " + reasons, lastFailure);
+        } catch (RuntimeException e) {
+            if (traceId != null) {
+                recorder.endCall(traceId, Instant.now(), false, e.getMessage());
+            }
+            throw e;
         }
-        log.error("模型路由全部候选失败: choice={}, candidates={}, reasons={}", modelChoice, candidates, reasons);
-        throw new IllegalStateException("所有模型候选均调用失败: " + reasons, lastFailure);
+    }
+
+    // ---- 调用记录埋点辅助（异常安全：记录失败绝不影响调用链） ----
+
+    private void recordSuccess(String traceId, String candidate, ChatResponse resp, long attemptMs) {
+        if (traceId == null) {
+            return;
+        }
+        try {
+            recorder.attemptSucceeded(traceId, candidate, responseText(resp), attemptMs,
+                    usage(resp, 0), usage(resp, 1), usage(resp, 2));
+            recorder.endCall(traceId, Instant.now(), true, null);
+        } catch (RuntimeException e) {
+            log.warn("LLM 调用记录成功埋点失败: {}", e.getMessage());
+        }
+    }
+
+    private static String promptText(Prompt prompt) {
+        return prompt.getInstructions().stream()
+                .map(m -> {
+                    var t = m.getText();
+                    return t == null ? "" : t;
+                })
+                .collect(Collectors.joining("\n"));
+    }
+
+    private static String responseText(ChatResponse resp) {
+        try {
+            var out = resp.getResult().getOutput();
+            return out == null ? null : out.getText();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** usage 提取（0=prompt / 1=completion / 2=total；不可用时 null） */
+    private static Integer usage(ChatResponse resp, int idx) {
+        try {
+            var usage = resp.getMetadata().getUsage();
+            if (usage == null) {
+                return null;
+            }
+            return switch (idx) {
+                case 0 -> usage.getPromptTokens();
+                case 1 -> usage.getCompletionTokens();
+                default -> usage.getTotalTokens();
+            };
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private ChatResponse callCandidate(RouteConfig cfg, String candidate, Prompt prompt) {

@@ -172,6 +172,21 @@ cosy:
         url: ${COSY_AGENT_CAPABILITY_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
         username: ${COSY_AGENT_CAPABILITY_MYSQL_USER:cosy}
         password: ${COSY_AGENT_CAPABILITY_MYSQL_PASSWORD:cosy}
+    llmlog:
+      # 大模型调用记录（旁路采集 llm_call_log，异步批量落库，不影响调用链）
+      # enabled=false：不装配，模型调用无记录（行为与现状一致）
+      enabled: ${COSY_AGENT_LLMLOG_ENABLED:true}
+      # 内容记录策略：plain（开发阶段完整明文，用于排查）| truncated（截断 content-chars）| none（不记内容）
+      content-mode: ${COSY_AGENT_LLMLOG_CONTENT_MODE:plain}
+      content-chars: ${COSY_AGENT_LLMLOG_CONTENT_CHARS:2000}
+      # 异步队列容量（满则丢弃并告警）与批量落库间隔
+      queue-capacity: ${COSY_AGENT_LLMLOG_QUEUE_CAPACITY:10000}
+      flush-interval-ms: ${COSY_AGENT_LLMLOG_FLUSH_INTERVAL_MS:5000}
+      mysql:
+        # 与路由/能力 store 同库（独立段便于覆写）；原生 JDBC
+        url: ${COSY_AGENT_LLMLOG_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+        username: ${COSY_AGENT_LLMLOG_MYSQL_USER:cosy}
+        password: ${COSY_AGENT_LLMLOG_MYSQL_PASSWORD:cosy}
 
 server:
   port: ${SERVER_PORT:8080}
