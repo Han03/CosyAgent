@@ -57,6 +57,7 @@ public class CapabilityRegistry {
     private final ResilienceSupport resilience;
     private final RestClient restClient;
     private final ApiKeyCipher apiKeyCipher;
+    private final CapabilityHealthProbe healthProbe;
 
     /** 提交/轮询响应的 JSON 解析（Jackson 无状态、线程安全） */
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -71,13 +72,15 @@ public class CapabilityRegistry {
 
     public CapabilityRegistry(ToolRegistry toolRegistry, CapabilityStore store,
                               CapabilityProperties properties, ResilienceSupport resilience,
-                              RestClient.Builder restClientBuilder, ApiKeyCipher apiKeyCipher) {
+                              RestClient.Builder restClientBuilder, ApiKeyCipher apiKeyCipher,
+                              CapabilityHealthProbe healthProbe) {
         this.toolRegistry = toolRegistry;
         this.store = store;
         this.properties = properties;
         this.resilience = resilience;
         this.restClient = restClientBuilder.build();
         this.apiKeyCipher = apiKeyCipher;
+        this.healthProbe = healthProbe;
         loadPersisted();
     }
 
@@ -183,7 +186,7 @@ public class CapabilityRegistry {
             Capability full = new Capability(c.name(), c.description(), c.parameters(),
                     c.endpointPath(), c.endpointMethod(), c.retryable(), namespace,
                     c.endpointMode(), c.statusPath(), c.resultPath(),
-                    c.pollIntervalMs(), c.pollTimeoutMs());
+                    c.pollIntervalMs(), c.pollTimeoutMs(), c.enabled());
             String fullName = full.fullName();
             // 工具名全局唯一：仅与"本地工具"冲突拒绝（能力 proxy 已存在 = 同能力多提供者，放行追加实例）
             boolean localConflict = toolRegistry.find(fullName)
@@ -243,6 +246,9 @@ public class CapabilityRegistry {
                 continue;
             }
             CapabilityProvider p = ref.get();
+            if (!e.getValue().enabled()) {
+                continue; // 手动下线：不参与寻址（proxy 已摘除，模型不可见）
+            }
             ActiveCapability ac = new ActiveCapability(p, e.getValue());
             if (p.status().callable()) {
                 chain.add(ac);
@@ -290,6 +296,7 @@ public class CapabilityRegistry {
         if (ref != null && ref.get().status().callable()) {
             ref.set(withStatus(ref.get(), CapabilityStatus.DOWN));
             log.warn("能力实例标记 DOWN: capability={}, provider={}", capabilityName, providerId);
+            refreshTools(); // 提供者不可达 → 该能力从提示词摘除（模型下一轮不再看到）
         }
     }
 
@@ -319,8 +326,9 @@ public class CapabilityRegistry {
         }
     }
 
-    /** CP 主动健康检查：周期探测 {baseUrl}/healthz，失败标 DOWN（不摘除），成功恢复 UP */
-    @Scheduled(fixedDelayString = "${cosy.agent.capability.probe.interval:60s}")
+    /** CP 主动健康检查：周期探测 {baseUrl}/healthz，失败标 DOWN（不摘除），成功恢复 UP。
+     *  initialDelay=1s：启动即探活一次，避免服务未上线时前 60s 空窗期误注入。 */
+    @Scheduled(initialDelay = 1_000, fixedDelayString = "${cosy.agent.capability.probe.interval:60s}")
     public void probeCpProviders() {
         if (!properties.probe().enabled()) {
             return;
@@ -342,6 +350,7 @@ public class CapabilityRegistry {
             if (p.status() != target) {
                 ref.set(withStatus(p, target));
                 log.info("CP 探测: provider={}, status={}", p.providerId(), target);
+                refreshTools(); // 状态变化立即同步工具集（不可达能力从提示词摘除/恢复）
             }
         }
     }
@@ -408,12 +417,24 @@ public class CapabilityRegistry {
     }
 
     /**
-     * 工具同步：能力表与 ToolRegistry 对齐——新增能力注入 CapabilityProxyTool，
-     * 已摘除能力的 proxy 移除。注册/摘除后调用；模型下一轮即看到最新工具集。
+     * 工具同步：能力表与 ToolRegistry 对齐——仅注入「已启用且提供者 TCP 可达」的能力 proxy，
+     * 已摘除/下线/不可达的 proxy 移除。注册/摘除/启停/探活后调用；模型下一轮即看到最新工具集。
+     * 注：可达性判据用 TCP 连通（healthProbe），与业务健康 status（/healthz）解耦——后者仅用于调用降级。
      */
     public synchronized void refreshTools() {
-        Set<String> active = capabilities.keySet();
-        // 移除已无实例的 proxy 工具
+        Set<String> active = new java.util.HashSet<>();
+        for (Map.Entry<String, Map<String, Capability>> e : capabilities.entrySet()) {
+            String name = e.getKey();
+            for (Map.Entry<String, Capability> inst : e.getValue().entrySet()) {
+                AtomicReference<CapabilityProvider> ref = providers.get(inst.getKey());
+                CapabilityProvider p = ref == null ? null : ref.get();
+                if (p != null && inst.getValue().enabled() && healthProbe.isReachable(p)) {
+                    active.add(name); // 任一实例启用且可达 → 注入
+                    break;
+                }
+            }
+        }
+        // 移除已无启用实例 / 已摘除的 proxy 工具
         for (com.cosy.agent.agent.tool.AgentTool tool : List.copyOf(toolRegistry.all())) {
             if (tool instanceof CapabilityProxyTool proxy && !active.contains(proxy.capabilityName())) {
                 toolRegistry.unregister(proxy.capabilityName());
@@ -426,6 +447,38 @@ public class CapabilityRegistry {
                 log.debug("能力工具注入: {}", name);
             }
         }
+    }
+
+    /**
+     * 能力启停（手动上线/下线）：作用于该能力全部提供者实例。
+     * 下线后 proxy 工具摘除（下一轮模型不再看到）、寻址空链（调用返回未找到）。
+     * CP 实例落库（enabled 随能力行持久化），AP 仅内存。返回受影响实例数。
+     */
+    public int setEnabled(String capabilityName, boolean enabled) {
+        Map<String, Capability> byProvider = capabilities.get(capabilityName);
+        if (byProvider == null || byProvider.isEmpty()) {
+            throw new BizException(ErrorCode.CAPABILITY_NOT_FOUND, capabilityName);
+        }
+        int affected = 0;
+        for (Map.Entry<String, Capability> e : new ArrayList<>(byProvider.entrySet())) {
+            Capability c = e.getValue();
+            if (c.enabled() == enabled) {
+                continue;
+            }
+            Capability updated = new Capability(c.name(), c.description(), c.parameters(),
+                    c.endpointPath(), c.endpointMethod(), c.retryable(), c.namespace(),
+                    c.endpointMode(), c.statusPath(), c.resultPath(),
+                    c.pollIntervalMs(), c.pollTimeoutMs(), enabled);
+            byProvider.put(e.getKey(), updated);
+            AtomicReference<CapabilityProvider> ref = providers.get(e.getKey());
+            if (ref != null && ref.get().isCp()) {
+                store.updateCapabilityEnabled(ref.get().providerId(), updated);
+            }
+            affected++;
+        }
+        refreshTools();
+        log.info("能力启停: capability={}, enabled={}, instances={}", capabilityName, enabled, affected);
+        return affected;
     }
 
     /** sync：单次 HTTP 调用（外层 call() 已对每个候选套 ResilienceTarget.TOOL 容错）。

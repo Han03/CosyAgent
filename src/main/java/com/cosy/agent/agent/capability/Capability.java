@@ -25,6 +25,7 @@ import java.util.Map;
  * @param resultPath     成功结果路径（含 {id} 占位），submit-poll 必填
  * @param pollIntervalMs 轮询间隔毫秒，缺省 3000
  * @param pollTimeoutMs  最大等待毫秒，缺省 600000（10 分钟）
+ * @param enabled        是否启用（手动下线开关：false 时不注入提示词、不参与寻址）
  */
 public record Capability(
         String name,
@@ -38,12 +39,22 @@ public record Capability(
         String statusPath,
         String resultPath,
         long pollIntervalMs,
-        long pollTimeoutMs) {
+        long pollTimeoutMs,
+        boolean enabled) {
 
     public static final String MODE_SYNC = "sync";
     public static final String MODE_SUBMIT_POLL = "submit-poll";
     public static final long DEFAULT_POLL_INTERVAL_MS = 3_000;
     public static final long DEFAULT_POLL_TIMEOUT_MS = 600_000;
+
+    /** 旧注册体兼容构造：12 参（无 enabled），默认启用 */
+    public Capability(String name, String description, Map<String, String> parameters,
+                      String endpointPath, String endpointMethod, boolean retryable, String namespace,
+                      String endpointMode, String statusPath, String resultPath,
+                      long pollIntervalMs, long pollTimeoutMs) {
+        this(name, description, parameters, endpointPath, endpointMethod, retryable, namespace,
+                endpointMode, statusPath, resultPath, pollIntervalMs, pollTimeoutMs, true);
+    }
 
     /** 旧注册体兼容构造：7 参即同步能力（endpointMode=sync，无轮询配置） */
     public Capability(String name, String description, Map<String, String> parameters,

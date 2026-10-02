@@ -108,6 +108,7 @@ public class CapabilityController {
                 inst.put("endpointMode", ac.capability().endpointMode());
                 inst.put("status", ac.provider().status().name());
                 inst.put("retryable", ac.capability().retryable());
+                inst.put("enabled", ac.capability().enabled());
                 inst.put("authModel", ac.provider().authModel());
                 inst.put("source", ac.provider().source());
                 return inst;
@@ -150,6 +151,7 @@ public class CapabilityController {
             cap.put("resultPath", c.resultPath());
             cap.put("pollIntervalMs", c.pollIntervalMs());
             cap.put("pollTimeoutMs", c.pollTimeoutMs());
+            cap.put("enabled", c.enabled());
             return cap;
         }).toList());
         return Result.ok(detail);
@@ -179,6 +181,18 @@ public class CapabilityController {
     public Result<Void> deleteProvider(@PathVariable String providerId) {
         registry.deregister(providerId);
         return Result.ok();
+    }
+
+    /** 能力启停（上线/下线）：enabled=false → 不注入提示词、不参与寻址 */
+    @PutMapping("/api/agent/capabilities/{capabilityName}/enabled")
+    public Result<Map<String, Object>> setEnabled(@PathVariable String capabilityName,
+                                                  @RequestBody Map<String, Boolean> body) {
+        Boolean enabled = body.get("enabled");
+        if (enabled == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "enabled 必填");
+        }
+        int affected = registry.setEnabled(capabilityName, enabled);
+        return Result.ok(Map.of("capability", capabilityName, "enabled", enabled, "instances", affected));
     }
 
     /** 提供者摘要（列表/详情共用）：密钥掩码、无 callToken */

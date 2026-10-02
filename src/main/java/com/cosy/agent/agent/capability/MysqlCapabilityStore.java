@@ -91,10 +91,20 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
                       endpoint_method   VARCHAR(8)   NOT NULL,
                       retryable         BOOLEAN      NOT NULL DEFAULT FALSE,
                       namespace         VARCHAR(64)  NOT NULL DEFAULT 'default',
+                      enabled           BOOLEAN      NOT NULL DEFAULT TRUE,
                       PRIMARY KEY (capability_name, provider_id),
                       CONSTRAINT fk_cap_provider FOREIGN KEY (provider_id)
                         REFERENCES capability_provider (provider_id) ON DELETE CASCADE
                     ) DEFAULT CHARSET=utf8mb4""");
+            // 旧库升级：能力启用开关列
+            try (ResultSet rs = st.executeQuery(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+                            + " AND TABLE_NAME = 'capability' AND COLUMN_NAME = 'enabled'")) {
+                rs.next();
+                if (rs.getInt(1) == 0) {
+                    st.executeUpdate("ALTER TABLE capability ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE");
+                }
+            }
         }
     }
 
@@ -145,12 +155,13 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
             for (Capability cap : capabilities) {
                 try (PreparedStatement ps = connection.prepareStatement("""
                         INSERT INTO capability
-                          (capability_name, provider_id, description, parameters_schema, endpoint_path, endpoint_method, retryable, namespace)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                          (capability_name, provider_id, description, parameters_schema, endpoint_path, endpoint_method, retryable, namespace, enabled)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON DUPLICATE KEY UPDATE
                           description = VALUES(description), parameters_schema = VALUES(parameters_schema),
                           endpoint_path = VALUES(endpoint_path), endpoint_method = VALUES(endpoint_method),
-                          retryable = VALUES(retryable), namespace = VALUES(namespace)""")) {
+                          retryable = VALUES(retryable), namespace = VALUES(namespace),
+                          enabled = VALUES(enabled)""")) {
                     ps.setString(1, cap.fullName());
                     ps.setString(2, provider.providerId());
                     ps.setString(3, cap.description());
@@ -159,6 +170,7 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
                     ps.setString(6, cap.endpointMethod());
                     ps.setBoolean(7, cap.retryable());
                     ps.setString(8, cap.namespace());
+                    ps.setBoolean(9, cap.enabled());
                     ps.executeUpdate();
                 }
             }
@@ -215,7 +227,9 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
                         rs.getString("endpoint_path"),
                         rs.getString("endpoint_method"),
                         rs.getBoolean("retryable"),
-                        rs.getString("namespace"));
+                        rs.getString("namespace"),
+                        Capability.MODE_SYNC, null, null, 0, 0,
+                        rs.getBoolean("enabled"));
                 // 以 provider_id 为 key（Registry.loadPersisted 按提供者恢复能力）
                 map.computeIfAbsent(providerId, k -> new ArrayList<>()).add(cap);
             }
@@ -223,6 +237,21 @@ public class MysqlCapabilityStore implements CapabilityStore, DisposableBean {
             throw new IllegalStateException("加载能力定义失败", e);
         }
         return map;
+    }
+
+    /** 能力启停落库：仅更新该提供者下某能力的 enabled 列 */
+    @Override
+    public void updateCapabilityEnabled(String providerId, Capability capability) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "UPDATE capability SET enabled = ? WHERE capability_name = ? AND provider_id = ?")) {
+            ps.setBoolean(1, capability.enabled());
+            ps.setString(2, capability.fullName());
+            ps.setString(3, providerId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.warn("能力启停落库失败: capability={}, provider={}, cause={}",
+                    capability.fullName(), providerId, e.getMessage());
+        }
     }
 
     @Override

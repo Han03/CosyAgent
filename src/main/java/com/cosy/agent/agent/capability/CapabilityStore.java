@@ -25,4 +25,12 @@ public interface CapabilityStore {
 
     /** 移除提供者及其能力（CP 注销/摘除时调用） */
     void deleteProvider(String providerId);
+
+    /**
+     * 能力启停持久化（CP 实例）：仅更新该提供者下某能力的 enabled 列。
+     * AP 实例可跳过（内存权威）。默认实现空操作（内存 store 无需落库）。
+     */
+    default void updateCapabilityEnabled(String providerId, Capability capability) {
+        // 内存镜像实现无需落库；MySQL 实现覆写
+    }
 }

@@ -100,7 +100,8 @@ class CapabilityRegistryTest {
         });
 
         registry = new CapabilityRegistry(toolRegistry, new MemoryCapabilityStore(), props,
-                resilience, RestClient.builder(), new ApiKeyCipher());
+                resilience, RestClient.builder(), new ApiKeyCipher(),
+                new CapabilityHealthProbe());
     }
 
     @AfterEach
