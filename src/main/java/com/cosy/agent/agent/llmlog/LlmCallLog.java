@@ -20,7 +20,8 @@ import java.time.Instant;
  * @param status            SUCCESS | FAILED（单候选失败属降级，状态仍 SUCCESS）
  * @param errorMsg          全部失败时的聚合错误
  * @param decisionRationale 自动路由决策原因（v2.1，决策器输出）
- * @param promptContent     输入内容（开发阶段明文；策略开关可截断/关闭）
+ * @param promptContent     输入内容摘要（开发阶段明文；策略开关可截断/关闭）
+ * @param rawPrompt         发给 LLM 的原始提示词（结构化 JSON：messages/tools/model）
  * @param responseContent   输出内容
  * @param promptTokens      SpringAI usage.promptTokens
  * @param completionTokens  usage.completionTokens
@@ -46,6 +47,7 @@ public record LlmCallLog(
         String errorMsg,
         String decisionRationale,
         String promptContent,
+        String rawPrompt,
         String responseContent,
         Integer promptTokens,
         Integer completionTokens,

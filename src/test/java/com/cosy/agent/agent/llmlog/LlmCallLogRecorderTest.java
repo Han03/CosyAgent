@@ -59,7 +59,8 @@ class LlmCallLogRecorderTest {
         CallRecorder recorder = recorder();
         LLMCallContext.set(new LLMCallContext.Context("s-1", "t-1", 3, null, "toolA,toolB"));
         String traceId = recorder.beginCall("auto", "default",
-                List.of("p1/m1", "p1/m2"), "task-tag: reasoning", "用户问题");
+                List.of("p1/m1", "p1/m2"), "task-tag: reasoning", "用户问题",
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"用户问题\"}]}");
         recorder.attemptFailed(traceId, "p1/m1", "连接失败: boom");
         recorder.attemptSucceeded(traceId, "p1/m2", "最终答案", 1200, 10, 20, 30);
         recorder.endCall(traceId, Instant.now(), true, null);
@@ -91,7 +92,7 @@ class LlmCallLogRecorderTest {
     void allCandidatesFailed_recordsFailedWithoutChosenModel() {
         CallRecorder recorder = recorder();
         String traceId = recorder.beginCall("auto", "default",
-                List.of("p1/m1", "p1/m2"), null, "q");
+                List.of("p1/m1", "p1/m2"), null, "q", null);
         recorder.attemptFailed(traceId, "p1/m1", "连接失败: x");
         recorder.attemptFailed(traceId, "p1/m2", "HTTP 503: y");
         recorder.endCall(traceId, Instant.now(), false, "所有模型候选均调用失败");

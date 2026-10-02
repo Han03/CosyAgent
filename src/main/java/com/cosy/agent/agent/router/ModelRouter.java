@@ -3,9 +3,14 @@ package com.cosy.agent.agent.router;
 import com.cosy.agent.agent.llmlog.CallRecorder;
 import com.cosy.agent.agent.resilience.ResilienceSupport;
 import com.cosy.agent.agent.resilience.ResilienceTarget;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -15,7 +20,9 @@ import org.springframework.web.client.RestClientException;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -43,6 +50,7 @@ public class ModelRouter {
     private final AtomicReference<RouteConfig> config;
     private AutoRouter autoRouter; // 可空：auto 决策层（v2.1）；null 时 auto 走静态链（现状）
     private CallRecorder recorder; // 可空：调用记录器（旁路采集，不装配时零影响）
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ModelRouter(ChatModel defaultChatModel, OpenAiChatOptions templateOptions,
                        ResilienceSupport resilience, RouteConfig baseline) {
@@ -147,7 +155,8 @@ public class ModelRouter {
 
         // ---- 调用记录埋点（旁路）：begin → 候选 attempt → end ----
         String traceId = recorder == null ? null
-                : recorder.beginCall(modelChoice, routeType, candidates, rationale, promptText(prompt));
+                : recorder.beginCall(modelChoice, routeType, candidates, rationale,
+                        promptText(prompt), rawPromptJson(prompt));
         List<String> attempts = new ArrayList<>();
         List<String> reasons = new ArrayList<>();
         RuntimeException lastFailure = null;
@@ -209,6 +218,49 @@ public class ModelRouter {
                     return t == null ? "" : t;
                 })
                 .collect(Collectors.joining("\n"));
+    }
+
+    /** 发给 LLM 的原始提示词（结构化 JSON）：逐条消息 role+content + 工具定义 + 模型名。
+     *  序列化失败返回 null（记录侧该字段留空，不影响调用链）。 */
+    private String rawPromptJson(Prompt prompt) {
+        try {
+            Map<String, Object> req = new LinkedHashMap<>();
+            List<Map<String, Object>> msgs = new ArrayList<>();
+            for (Message m : prompt.getInstructions()) {
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("role", roleOf(m));
+                String text = m.getText();
+                msg.put("content", text == null ? "" : text);
+                msgs.add(msg);
+            }
+            req.put("messages", msgs);
+            if (templateOptions != null) {
+                if (templateOptions.getModel() != null) {
+                    req.put("model", templateOptions.getModel());
+                }
+                var tools = templateOptions.getTools();
+                if (tools != null && !tools.isEmpty()) {
+                    req.put("tools", tools);
+                }
+            }
+            return objectMapper.writeValueAsString(req);
+        } catch (RuntimeException | java.io.IOException e) {
+            log.warn("原始提示词序列化失败（该字段留空）: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private static String roleOf(Message m) {
+        if (m instanceof SystemMessage) {
+            return "system";
+        }
+        if (m instanceof UserMessage) {
+            return "user";
+        }
+        if (m instanceof AssistantMessage) {
+            return "assistant";
+        }
+        return m.getMessageType() == null ? "message" : m.getMessageType().name().toLowerCase();
     }
 
     private static String responseText(ChatResponse resp) {

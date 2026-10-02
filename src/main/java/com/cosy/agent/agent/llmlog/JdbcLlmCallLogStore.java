@@ -70,6 +70,7 @@ public class JdbcLlmCallLogStore implements LlmCallLogStore, DisposableBean {
                       error_msg          VARCHAR(512) NULL,
                       decision_rationale VARCHAR(1024) NULL,
                       prompt_content     MEDIUMTEXT   NULL,
+                      raw_prompt         MEDIUMTEXT   NULL,
                       response_content   MEDIUMTEXT   NULL,
                       prompt_tokens      INT          NULL,
                       completion_tokens  INT          NULL,
@@ -84,6 +85,7 @@ public class JdbcLlmCallLogStore implements LlmCallLogStore, DisposableBean {
                     ) DEFAULT CHARSET=utf8mb4""");
             // 老表补列（MySQL 8 不支持 ADD COLUMN IF NOT EXISTS，information_schema 判断后幂等 ALTER）
             ensureColumn(st, "injected_tools", "VARCHAR(512) NULL");
+            ensureColumn(st, "raw_prompt", "MEDIUMTEXT NULL");
         }
     }
 
@@ -114,9 +116,9 @@ public class JdbcLlmCallLogStore implements LlmCallLogStore, DisposableBean {
                 INSERT INTO llm_call_log
                   (trace_id, session_id, task_id, iteration, tool_name, route_type, model_choice,
                    candidate_chain, injected_tools, attempts, reasons, chosen_model, status, error_msg, decision_rationale,
-                   prompt_content, response_content, prompt_tokens, completion_tokens, total_tokens,
+                   prompt_content, raw_prompt, response_content, prompt_tokens, completion_tokens, total_tokens,
                    latency_ms, started_at, finished_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""";
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (LlmCallLog logEntry : logs) {
                 ps.setString(1, logEntry.traceId());
@@ -135,13 +137,14 @@ public class JdbcLlmCallLogStore implements LlmCallLogStore, DisposableBean {
                 ps.setString(14, truncate(logEntry.errorMsg(), 512));
                 ps.setString(15, truncate(logEntry.decisionRationale(), 1024));
                 ps.setString(16, logEntry.promptContent());
-                ps.setString(17, logEntry.responseContent());
-                ps.setObject(18, logEntry.promptTokens());
-                ps.setObject(19, logEntry.completionTokens());
-                ps.setObject(20, logEntry.totalTokens());
-                ps.setInt(21, (int) Math.min(Integer.MAX_VALUE, logEntry.latencyMs()));
-                ps.setTimestamp(22, Timestamp.from(logEntry.startedAt()));
-                ps.setTimestamp(23, Timestamp.from(logEntry.finishedAt()));
+                ps.setString(17, logEntry.rawPrompt());
+                ps.setString(18, logEntry.responseContent());
+                ps.setObject(19, logEntry.promptTokens());
+                ps.setObject(20, logEntry.completionTokens());
+                ps.setObject(21, logEntry.totalTokens());
+                ps.setInt(22, (int) Math.min(Integer.MAX_VALUE, logEntry.latencyMs()));
+                ps.setTimestamp(23, Timestamp.from(logEntry.startedAt()));
+                ps.setTimestamp(24, Timestamp.from(logEntry.finishedAt()));
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -384,6 +387,7 @@ public class JdbcLlmCallLogStore implements LlmCallLogStore, DisposableBean {
                 rs.getString("error_msg"),
                 rs.getString("decision_rationale"),
                 rs.getString("prompt_content"),
+                rs.getString("raw_prompt"),
                 rs.getString("response_content"),
                 promptTokens,
                 completionTokens,

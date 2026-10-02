@@ -47,9 +47,10 @@ public class CallRecorder {
     // ---- 采集（业务线程调用，零阻塞） ----
 
     /** 一次调用开始；返回 traceId（null=记录不可用）。
-     *  数据归一化：未指定模型（null/空）统一记为 "auto"，与路由语义一致，保证 NOT NULL 列可落库。 */
+     *  数据归一化：未指定模型（null/空）统一记为 "auto"，与路由语义一致，保证 NOT NULL 列可落库。
+     *  rawPrompt：发给 LLM 的原始提示词（结构化 JSON，含 messages/tools/model；可空）。 */
     public String beginCall(String modelChoice, String routeType, List<String> candidateChain,
-                            String decisionRationale, String promptContent) {
+                            String decisionRationale, String promptContent, String rawPrompt) {
         try {
             LLMCallContext.Context ctx = LLMCallContext.get();
             String traceId = UUID.randomUUID().toString().replace("-", "");
@@ -58,7 +59,7 @@ public class CallRecorder {
                     modelChoice == null || modelChoice.isBlank() ? "auto" : modelChoice,
                     candidateChain == null ? List.of() : candidateChain,
                     decisionRationale, ctx.injectedTools(), properties.applyContent(promptContent),
-                    Instant.now());
+                    rawPrompt, Instant.now());
             pending.put(traceId, pc);
             return traceId;
         } catch (RuntimeException e) {
@@ -112,7 +113,7 @@ public class CallRecorder {
                 pc.chosenModel,
                 success ? LlmCallLog.STATUS_SUCCESS : LlmCallLog.STATUS_FAILED,
                 errorMsg, pc.decisionRationale,
-                pc.promptContent, pc.responseContent,
+                pc.promptContent, pc.rawPrompt, pc.responseContent,
                 pc.promptTokens, pc.completionTokens, pc.totalTokens,
                 java.time.Duration.between(pc.startedAt, finishedAt).toMillis(),
                 pc.startedAt, finishedAt);
@@ -151,6 +152,7 @@ public class CallRecorder {
         final List<String> reasons = new ArrayList<>();
         final String decisionRationale;
         final String promptContent;
+        final String rawPrompt;
         final Instant startedAt;
         String chosenModel;
         String responseContent;
@@ -162,7 +164,7 @@ public class CallRecorder {
         PendingCall(String traceId, String sessionId, String taskId, int iteration, String toolName,
                     String routeType, String modelChoice, List<String> candidateChain,
                     String decisionRationale, String injectedTools, String promptContent,
-                    Instant startedAt) {
+                    String rawPrompt, Instant startedAt) {
             this.traceId = traceId;
             this.sessionId = sessionId;
             this.taskId = taskId;
@@ -174,6 +176,7 @@ public class CallRecorder {
             this.injectedTools = injectedTools;
             this.decisionRationale = decisionRationale;
             this.promptContent = promptContent;
+            this.rawPrompt = rawPrompt;
             this.startedAt = startedAt;
         }
     }
