@@ -15,7 +15,7 @@
 | PostgreSQL + PGVector | 任意 | 知识库向量检索 |
 | Resilience4j | 2.4.0 | Retry / CircuitBreaker / RateLimiter / TimeLimiter / Bulkhead |
 
-## 模块结构（Step 1 ~ Step 6 + Step M 已落地）
+## 模块结构
 
 ```
 src/main/java/com/cosy/agent
@@ -79,18 +79,6 @@ curl -X POST http://localhost:8080/api/agent/tasks/<taskId>/resume \
 docker compose up -d --build     # Redis + PGVector + 应用（生产形态：向量检索与任务持久化均走 PostgreSQL）
 kubectl apply -f deploy/k8s/     # K8s：Secret/ConfigMap + 2 副本 Deployment + 探针 + ClusterIP Service
 ```
-
-## 分步路线图
-
-| 步骤 | 内容 | 状态 |
-| --- | --- | --- |
-| Step 1 | 基础框架：工程骨架、分层契约、工具注册表、统一接口 | ✅ 已交付 |
-| Step 2 | ReAct 编排：ChatModel 手动循环、工具桥接（FunctionTool）、Thought→Action→Observation、终止条件 | ✅ 已交付 |
-| Step 3 | Redis 多层记忆：RedisMemoryStore、TTL 分层、滚动会话记录、记忆注入与持久化、自动降级 | ✅ 已交付 |
-| Step M | LLM 端到端 Mock 模块：ChatModel 装饰器 + 剧本引擎 + 随机性注入，开关开启时全链路可跑通 | ✅ 已交付 |
-| Step 4 | PGVector 知识检索：文档切分、向量化、InMemory/PGVector 双存储、RAG 检索注入、命名空间隔离 | ✅ 已交付 |
-| Step 5 | Resilience4j 容错：重试/熔断/限流/超时/舱壁与降级（ResilienceSupport 组合链 + yaml 声明式策略） | ✅ 已交付 |
-| Step 6 | 状态持久化与生产化：任务状态机（INIT→RUNNING→终态）、agent_task/agent_trace 轨迹持久化、断点恢复 resume、API 鉴权（X-API-Key）、Docker/K8s 部署物 | ✅ 已交付 |
 
 ## 测试
 
