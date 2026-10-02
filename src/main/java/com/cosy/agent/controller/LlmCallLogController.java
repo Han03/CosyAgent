@@ -2,6 +2,7 @@ package com.cosy.agent.controller;
 
 import com.cosy.agent.agent.llmlog.LlmCallLog;
 import com.cosy.agent.agent.llmlog.LlmCallLogStore;
+import com.cosy.agent.common.api.Result;
 import com.cosy.agent.service.LlmCallLogService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 大模型调用记录 API（只读）：
+ * 大模型调用记录 API（只读，统一 Result 包装）：
  * <ul>
  *   <li>GET /api/agent/llm-logs — 分页列表（sessionId/model/routeType/status/start/end 过滤）</li>
  *   <li>GET /api/agent/llm-logs/{id} — 单条详情（含明文内容，开发阶段用于排查）</li>
@@ -36,7 +37,7 @@ public class LlmCallLogController {
     }
 
     @GetMapping
-    public Map<String, Object> page(
+    public Result<Map<String, Object>> page(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String sessionId,
@@ -47,23 +48,23 @@ public class LlmCallLogController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime end) {
         LlmCallLogStore.PageResult result = service.page(page, size, sessionId, model, routeType, status,
                 toInstant(start), toInstant(end));
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("total", result.total());
-        resp.put("items", result.items());
-        return resp;
+        Map<String, Object> data = new HashMap<>();
+        data.put("total", result.total());
+        data.put("items", result.items());
+        return Result.ok(data);
     }
 
     @GetMapping("/{id}")
-    public Map<String, Object> detail(@PathVariable long id) {
-        Map<String, Object> resp = new HashMap<>();
+    public Result<Map<String, Object>> detail(@PathVariable long id) {
+        Map<String, Object> data = new HashMap<>();
         service.detail(id).ifPresentOrElse(
-                logEntry -> resp.put("item", logEntry),
-                () -> resp.put("item", null));
-        return resp;
+                logEntry -> data.put("item", logEntry),
+                () -> data.put("item", null));
+        return Result.ok(data);
     }
 
     @GetMapping("/stats")
-    public Map<String, Object> stats(
+    public Result<Map<String, Object>> stats(
             @RequestParam(required = false, defaultValue = "day") String groupBy,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime start,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime end,
@@ -73,9 +74,9 @@ public class LlmCallLogController {
             @RequestParam(required = false) String status) {
         List<Map<String, Object>> groups = service.stats(groupBy, toInstant(start), toInstant(end),
                 sessionId, model, routeType, status);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("groups", groups);
-        return resp;
+        Map<String, Object> data = new HashMap<>();
+        data.put("groups", groups);
+        return Result.ok(data);
     }
 
     private static Instant toInstant(LocalDateTime ldt) {
