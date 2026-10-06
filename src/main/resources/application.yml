@@ -144,6 +144,12 @@ cosy:
       # API 鉴权（Step 6 生产化）：配置后 /api/** 需携带 X-API-Key 请求头；
       # 留空（默认）不启用，便于本地开发与测试。
       api-key: ${COSY_AGENT_API_KEY:}
+    tool:
+      baidu-translate:
+        # 百度翻译标准版（免费不限量）：appid/secret 用于 MD5 动态签名
+        # 未配置时工具可注册但执行返回"未配置"提示（供模型引导用户补配）
+        appid: ${COSY_BAIDU_TRANSLATE_APPID:}
+        secret: ${COSY_BAIDU_TRANSLATE_SECRET:}
     capability:
       # 能力注册中心（参考 Nacos AP/CP）：外部项目注册能力 → Agent 远程调用
       # enabled=false（默认）：注册 API 与动态工具注入不生效，系统与现状等价
@@ -268,6 +274,7 @@ resilience4j:
 logging:
   level:
     io.github.resilience4j: DEBUG   # 观察重试/熔断/限流事件（生产建议 INFO）
+    com.cosy.agent.agent.capability: DEBUG   # 能力注册/注入/探活诊断
 
 management:
   endpoints:

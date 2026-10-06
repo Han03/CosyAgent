@@ -20,11 +20,6 @@ import java.util.Map;
 
 /**
  * 大模型调用记录 API（只读，统一 Result 包装）：
- * <ul>
- *   <li>GET /api/agent/llm-logs — 分页列表（sessionId/model/routeType/status/start/end 过滤）</li>
- *   <li>GET /api/agent/llm-logs/{id} — 单条详情（含明文内容，开发阶段用于排查）</li>
- *   <li>GET /api/agent/llm-logs/stats — 聚合统计（groupBy=day|model|routeType|status）</li>
- * </ul>
  */
 @RestController
 @RequestMapping("/api/agent/llm-logs")

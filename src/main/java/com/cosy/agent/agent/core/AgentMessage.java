@@ -7,7 +7,7 @@ import java.time.Instant;
  *
  * @param role          消息角色
  * @param content       文本内容（思考 / 回答 / 用户输入 / 工具结果）
- * @param toolCallId    工具调用 ID（Step 2 与 LLM 工具调用对齐）
+ * @param toolCallId    工具调用 ID
  * @param toolName      工具名（角色为 TOOL 时有效）
  * @param toolArguments 工具入参（JSON 字符串）
  */

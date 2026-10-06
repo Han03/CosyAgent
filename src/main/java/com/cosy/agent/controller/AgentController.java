@@ -4,13 +4,17 @@ import com.cosy.agent.agent.core.AgentMessage;
 import com.cosy.agent.agent.core.AgentResult;
 import com.cosy.agent.agent.memory.MemoryLevel;
 import com.cosy.agent.agent.memory.MemoryStore;
+import com.cosy.agent.agent.router.ModelRoutingAdmin;
 import com.cosy.agent.agent.task.AgentTask;
 import com.cosy.agent.agent.task.TaskStore;
 import com.cosy.agent.agent.tool.ToolRegistry;
 import com.cosy.agent.common.api.Result;
+import com.cosy.agent.common.enums.ErrorCode;
+import com.cosy.agent.common.exception.BizException;
 import com.cosy.agent.service.AgentOrchestrator;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -31,7 +35,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Agent 对外 HTTP 接口（Step 6 起新增任务查询/审计/断点恢复）。
+ * Agent 对外 HTTP 接口
  *
  * <p>请求头 {@code X-Cosy-Mock}: 请求级 Mock 开关（true/false），覆盖全局
  * {@code cosy.agent.mock.enabled}；不携带时回退全局配置。供客户端设置页动态切换。</p>
@@ -46,12 +50,12 @@ public class AgentController {
     private final ToolRegistry toolRegistry;
     private final TaskStore taskStore;
     private final MemoryStore memoryStore;
-    private final com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin;
+    private final ModelRoutingAdmin modelRoutingAdmin;
     private final TaskExecutor taskExecutor;
 
     public AgentController(AgentOrchestrator orchestrator, ToolRegistry toolRegistry, TaskStore taskStore,
-                           MemoryStore memoryStore, com.cosy.agent.agent.router.ModelRoutingAdmin modelRoutingAdmin,
-                           @org.springframework.beans.factory.annotation.Qualifier("applicationTaskExecutor")
+                           MemoryStore memoryStore, ModelRoutingAdmin modelRoutingAdmin,
+                           @Qualifier("applicationTaskExecutor")
                            TaskExecutor taskExecutor) {
         this.orchestrator = orchestrator;
         this.toolRegistry = toolRegistry;
@@ -61,7 +65,7 @@ public class AgentController {
         this.taskExecutor = taskExecutor;
     }
 
-    /** 对话入口（Step 2 起返回真实 Agent 回答；Step 6 起 data.taskId 为持久化任务 ID；
+    /** 对话入口
      * X-Cosy-Model 请求头指定模型或 auto；X-Cosy-Route-Type 指定路由类型） */
     @PostMapping("/chat")
     public Result<AgentResult> chat(@Valid @RequestBody ChatRequest request,
@@ -116,15 +120,15 @@ public class AgentController {
         }
     }
 
-    /** 任务详情（主记录 + 执行轨迹审计，Step 6） */
+    /** 任务详情（主记录 + 执行轨迹审计） */
     @GetMapping("/tasks/{taskId}")
     public Result<TaskStore.TaskDetail> task(@PathVariable String taskId) {
         return Result.ok(taskStore.findById(taskId)
-                .orElseThrow(() -> new com.cosy.agent.common.exception.BizException(
-                        com.cosy.agent.common.enums.ErrorCode.TASK_NOT_FOUND, taskId)));
+                .orElseThrow(() -> new BizException(
+                        ErrorCode.TASK_NOT_FOUND, taskId)));
     }
 
-    /** 按会话查询任务列表（更新时间倒序，Step 6） */
+    /** 按会话查询任务列表（更新时间倒序） */
     @GetMapping("/tasks")
     public Result<List<AgentTask>> tasks(@RequestParam(defaultValue = "20") int limit,
                                          @RequestParam(required = false) String sessionId) {
@@ -144,8 +148,8 @@ public class AgentController {
     @GetMapping("/sessions/{sessionId}")
     public Result<TaskStore.SessionSummary> session(@PathVariable String sessionId) {
         return Result.ok(taskStore.findSession(sessionId)
-                .orElseThrow(() -> new com.cosy.agent.common.exception.BizException(
-                        com.cosy.agent.common.enums.ErrorCode.SESSION_NOT_FOUND, sessionId)));
+                .orElseThrow(() -> new BizException(
+                        ErrorCode.SESSION_NOT_FOUND, sessionId)));
     }
 
     /** 会话全量消息（进入会话恢复历史用）：按消息时间戳升序合并全部任务轨迹 */
@@ -179,7 +183,7 @@ public class AgentController {
         return Result.ok(Boolean.TRUE);
     }
 
-    /** 断点恢复：以历史任务轨迹为上下文继续执行（新任务，Step 6） */
+    /** 断点恢复：以历史任务轨迹为上下文继续执行（新任务） */
     @PostMapping("/tasks/{taskId}/resume")
     public Result<AgentResult> resume(@PathVariable String taskId, @Valid @RequestBody ResumeRequest request,
                                       @RequestHeader(value = "X-Cosy-Mock", required = false) String mockHeader,
@@ -213,7 +217,7 @@ public class AgentController {
     /** 全量更新模型路由配置（api-key 空 = 保持原值；热更新即时生效） */
     @PutMapping("/model-routing")
     public Result<Boolean> updateModelRouting(
-            @Valid @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.UpdateRequest request) {
+            @Valid @RequestBody ModelRoutingAdmin.UpdateRequest request) {
         modelRoutingAdmin.updateConfig(request);
         return Result.ok(Boolean.TRUE);
     }
@@ -241,7 +245,7 @@ public class AgentController {
     /** 新增平台（api-key 必填一次，落库加密） */
     @PostMapping("/model-routing/providers/{name}")
     public Result<Boolean> createModelProvider(@PathVariable String name,
-            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ProviderDto dto) {
+            @RequestBody ModelRoutingAdmin.ProviderDto dto) {
         modelRoutingAdmin.createProvider(name, dto);
         return Result.ok(Boolean.TRUE);
     }
@@ -249,7 +253,7 @@ public class AgentController {
     /** 更新平台（api-key 空 = 保持原值） */
     @PutMapping("/model-routing/providers/{name}")
     public Result<Boolean> updateModelProvider(@PathVariable String name,
-            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ProviderDto dto) {
+            @RequestBody ModelRoutingAdmin.ProviderDto dto) {
         modelRoutingAdmin.updateProvider(name, dto);
         return Result.ok(Boolean.TRUE);
     }
@@ -264,7 +268,7 @@ public class AgentController {
     /** 平台下新增模型规格 */
     @PostMapping("/model-routing/providers/{name}/models/{modelId}")
     public Result<Boolean> addModel(@PathVariable String name, @PathVariable String modelId,
-            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ModelDto dto) {
+            @RequestBody ModelRoutingAdmin.ModelDto dto) {
         modelRoutingAdmin.addModel(name, modelId, dto);
         return Result.ok(Boolean.TRUE);
     }
@@ -272,7 +276,7 @@ public class AgentController {
     /** 更新模型规格 */
     @PutMapping("/model-routing/providers/{name}/models/{modelId}")
     public Result<Boolean> updateModel(@PathVariable String name, @PathVariable String modelId,
-            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.ModelDto dto) {
+            @RequestBody ModelRoutingAdmin.ModelDto dto) {
         modelRoutingAdmin.updateModel(name, modelId, dto);
         return Result.ok(Boolean.TRUE);
     }
@@ -300,7 +304,7 @@ public class AgentController {
     /** 连通性测试：对指定平台（+模型）发最小请求，返回耗时或可读错误（key 不出库） */
     @PostMapping("/model-routing/test")
     public Result<Map<String, Object>> testModelConnection(
-            @RequestBody com.cosy.agent.agent.router.ModelRoutingAdmin.TestRequest request) {
+            @RequestBody ModelRoutingAdmin.TestRequest request) {
         return Result.ok(modelRoutingAdmin.testConnection(request.providerId(), request.modelId(), request.prompt()));
     }
 

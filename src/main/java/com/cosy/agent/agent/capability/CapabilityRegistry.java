@@ -501,9 +501,19 @@ public class CapabilityRegistry {
         // query 认证参数优先拼接（模型生成的业务参数不覆盖认证参数名）
         url = url + authQuery(provider, url);
         if (isGet && !params.isEmpty()) {
-            StringBuilder q = new StringBuilder(url.contains("?") ? "&" : "?");
-            params.forEach((k, v) -> q.append(k).append('=').append(v));
-            url = url + q;
+            // 参数间 & 分隔 + 键值 URL 编码（模型生成的参数可能是 float/bool 等原始类型）
+            StringBuilder q = new StringBuilder();
+            boolean first = true;
+            for (Map.Entry<String, Object> e : params.entrySet()) {
+                if (!first) {
+                    q.append('&');
+                }
+                first = false;
+                q.append(java.net.URLEncoder.encode(e.getKey(), java.nio.charset.StandardCharsets.UTF_8))
+                        .append('=')
+                        .append(java.net.URLEncoder.encode(String.valueOf(e.getValue()), java.nio.charset.StandardCharsets.UTF_8));
+            }
+            url = url + (url.contains("?") ? "&" : "?") + q;
         }
         String body;
         if (isGet) {

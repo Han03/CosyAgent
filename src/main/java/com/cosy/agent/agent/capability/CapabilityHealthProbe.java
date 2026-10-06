@@ -53,10 +53,26 @@ public class CapabilityHealthProbe {
             String host = uri.getHost();
             int port = uri.getPort() > 0 ? uri.getPort()
                     : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
-            try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
-                return true;
+            // 显式解析全部地址并逐个尝试：优先 IPv4——部分域名含 AAAA 记录，
+            // 默认解析命中 IPv6 时，在无 IPv6 出口的网络（如本机）会连接失败，
+            // 导致探活误判不可达、能力不注入。
+            java.net.InetAddress[] addresses = java.net.InetAddress.getAllByName(host);
+            // 先试 IPv4，再试 IPv6（happy-eyeballs 简化版）
+            for (int pass = 0; pass < 2; pass++) {
+                for (java.net.InetAddress addr : addresses) {
+                    boolean isV4 = addr instanceof java.net.Inet4Address;
+                    if ((pass == 0) != isV4) {
+                        continue;
+                    }
+                    try (Socket socket = new Socket()) {
+                        socket.connect(new InetSocketAddress(addr, port), CONNECT_TIMEOUT_MS);
+                        return true;
+                    } catch (Exception ignored) {
+                        // 该地址不可达，尝试下一个
+                    }
+                }
             }
+            return false;
         } catch (Exception e) {
             return false;
         }

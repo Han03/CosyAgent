@@ -62,11 +62,11 @@ public class DefaultReActAgent implements ReActAgent {
     private static final String RECENT_KEY = "recent";
 
     private static final String SYSTEM_PROMPT = """
-            你是 CosyAgent，一个企业级任务型智能体。请遵循 ReAct 模式完成任务：
-            1. Thought：分析用户意图，规划下一步行动；
-            2. Action：如需外部信息或操作，调用系统提供的工具；
-            3. Observation：根据工具返回结果继续推理；
-            4. 当信息足够时，直接输出最终回答（使用与用户相同的语言）。
+            你是 CosyAgent，一个企业级任务型智能体。
+            当回答需要外部信息或执行操作时，必须调用系统提供的工具：
+            - 优先使用原生工具调用（function calling）；
+            - 若以文本表达工具调用，严格按此格式输出：第一行工具名，第二行 JSON 参数（无参数输出 {}）。
+            信息足够时，直接输出最终回答（使用与用户相同的语言）。
             仅可调用系统明确提供的工具，不要编造工具名。""";
 
     private final ChatModel chatModel;
@@ -182,9 +182,22 @@ public class DefaultReActAgent implements ReActAgent {
 
             AssistantMessage assistant = response.getResult().getOutput();
             List<AssistantMessage.ToolCall> toolCalls = assistant.getToolCalls();
+            String assistantText = assistant.getText();
+
+            // 文本格式工具调用兜底：部分模型（如 glm-4-flash）在 ReAct 提示下以「工具名\n{json}」
+            // 纯文本表达工具调用而非原生 function calling；归一化为 ToolCall 走标准执行路径，
+            // 避免"模型已表达调用意图但工具未执行、文本当最终答案返回"。
+            if ((toolCalls == null || toolCalls.isEmpty())
+                    && assistantText != null && !assistantText.isBlank()) {
+                AssistantMessage.ToolCall textCall = parseTextToolCall(assistantText);
+                if (textCall != null) {
+                    toolCalls = List.of(textCall);
+                    assistantText = null; // 工具调用指令不当作思考文本透出
+                }
+            }
 
             if (toolCalls == null || toolCalls.isEmpty()) {
-                answer = assistant.getText();
+                answer = assistantText;
                 emit(listener, AgentStreamEvent.answer(answer));
                 trace.add(AgentMessage.assistant(answer));
                 state = AgentState.COMPLETED;
@@ -192,7 +205,7 @@ public class DefaultReActAgent implements ReActAgent {
             }
 
             // 行动前的思考：该轮模型在工具调用前的推理文本透出（无文本则不发）
-            String thought = assistant.getText();
+            String thought = assistantText;
             if (thought != null && !thought.isBlank()) {
                 emit(listener, AgentStreamEvent.reasoning(iterations, thought));
             }
@@ -259,11 +272,67 @@ public class DefaultReActAgent implements ReActAgent {
         return sb.toString();
     }
 
+    /**
+     * 文本格式工具调用解析：模型输出形如「工具名\n{json}」（如 glm-4-flash 的
+     * `weather_forecast\n{"latitude":31.23,...}`）时归一化为 ToolCall。
+     *
+     * <p>判定约束（防误伤普通回答）：
+     * ① 首行必须命中当前注入工具集——先精确名，再走 {@link #resolveTool} 宽容匹配
+     * （大小写/描述全文），最后补描述前缀匹配（部分模型截断描述当工具名）；
+     * ② 参数必须是合法 JSON（无参数视作 {}）。
+     * 不满足任一条件返回 null，交由上层按最终回答处理。</p>
+     */
+    private AssistantMessage.ToolCall parseTextToolCall(String text) {
+        if (text == null) {
+            return null;
+        }
+        String trimmed = text.strip();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        // 工具调用体：从首个 '{' 起为 JSON 参数（兼容"首行 + 第二行 JSON"与"首行内联 JSON"两种形态）
+        int jsonStart = trimmed.indexOf('{');
+        String head = (jsonStart >= 0 ? trimmed.substring(0, jsonStart) : trimmed).strip();
+        String body = jsonStart >= 0 ? trimmed.substring(jsonStart) : "";
+        // 容忍 ReAct 指示前缀（"Action:" / "行动:"）后跟工具名；无前缀直接匹配
+        String rawName = head.replaceFirst("^(?:Action|行动)\\s*[:：]?\\s*", "").strip();
+        if (rawName.isEmpty()) {
+            return null;
+        }
+        AgentTool tool = resolveTool(rawName);
+        if (tool == null && rawName.length() >= 4) {
+            // 描述前缀匹配：模型截断描述当前缀（如 "法定节假日查询（免费无key，覆盖100+国家）"）
+            for (AgentTool t : toolRegistry.all()) {
+                if (t.description() != null && t.description().startsWith(rawName)) {
+                    log.info("工具名描述前缀匹配: {} -> {}", rawName, t.name());
+                    tool = t;
+                    break;
+                }
+            }
+        }
+        if (tool == null) {
+            return null; // 首行非注入工具名/描述 → 不是工具调用
+        }
+        String argsJson = "{}";
+        int s = body.indexOf('{');
+        int e = body.lastIndexOf('}');
+        if (s >= 0 && e > s) {
+            argsJson = body.substring(s, e + 1);
+        }
+        try {
+            parseArgs(argsJson); // 合法性校验：非法 JSON 不当工具调用
+        } catch (Exception ex) {
+            log.debug("文本工具调用参数非法，按最终回答处理: tool={}, args={}", tool.name(), argsJson);
+            return null;
+        }
+        log.info("文本格式工具调用兜底: {} -> {}", tool.name(), argsJson);
+        return new AssistantMessage.ToolCall("text-" + System.nanoTime(), "function", tool.name(), argsJson);
+    }
+
     /** 工具名解析：先精确匹配，再容忍 LLM 改写（大小写/空格/以描述全文当工具名）。
      * 根因兜底：部分模型（如 glm-4-flash）会返回工具描述而非名称，直接 find 会
      * 丢给"未知工具"自愈；此处把描述→名映射后仍能正确执行。 */
-    private AgentTool resolveTool(String name) {
-        if (name == null) {
+    private AgentTool resolveTool(String name) {        if (name == null) {
             return null;
         }
         String raw = name.trim();

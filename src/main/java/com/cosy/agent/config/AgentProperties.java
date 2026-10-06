@@ -9,12 +9,12 @@ import java.time.Duration;
 /**
  * CosyAgent 核心配置项（prefix: cosy.agent）。
  *
- * @param maxIterations   ReAct 最大迭代轮数（Step 2 生效）
- * @param toolTimeout     单次工具调用超时（Step 5 生效）
- * @param sessionTimeout  会话记忆 TTL（Step 3 生效）
- * @param longTermTimeout 长期记忆 TTL（Step 3 生效）
- * @param workingTimeout  工作记忆 TTL（Step 3 生效）
- * @param mock            LLM 端到端 Mock 模块配置（Step M 生效）
+ * @param maxIterations   ReAct 最大迭代轮数
+ * @param toolTimeout     单次工具调用超时
+ * @param sessionTimeout  会话记忆 TTL
+ * @param longTermTimeout 长期记忆 TTL
+ * @param workingTimeout  工作记忆 TTL
+ * @param mock            LLM 端到端 Mock 模块配置
  */
 @ConfigurationProperties(prefix = "cosy.agent")
 public record AgentProperties(

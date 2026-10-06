@@ -25,7 +25,7 @@ import java.util.Map;
  * @param resultPath     成功结果路径（含 {id} 占位），submit-poll 必填
  * @param pollIntervalMs 轮询间隔毫秒，缺省 3000
  * @param pollTimeoutMs  最大等待毫秒，缺省 600000（10 分钟）
- * @param enabled        是否启用（手动下线开关：false 时不注入提示词、不参与寻址）
+ * @param enabled        是否启用（注册未显式声明时默认 true=注册即上线；false 时不注入提示词、不参与寻址）
  */
 public record Capability(
         String name,
@@ -40,7 +40,7 @@ public record Capability(
         String resultPath,
         long pollIntervalMs,
         long pollTimeoutMs,
-        boolean enabled) {
+        Boolean enabled) {
 
     public static final String MODE_SYNC = "sync";
     public static final String MODE_SUBMIT_POLL = "submit-poll";
@@ -63,7 +63,8 @@ public record Capability(
                 MODE_SYNC, null, null, 0, 0);
     }
 
-    /** 归一化缺省值：空 mode 视为 sync；非法值拒绝（注册校验处抛错）；非正轮询参数取默认 */
+    /** 归一化缺省值：空 mode 视为 sync；非法值拒绝（注册校验处抛错）；非正轮询参数取默认；
+     *  enabled 未显式声明（JSON 未传 → null）时默认 true（注册即上线），显式 false 才下线 */
     public Capability {
         if (endpointMode == null || endpointMode.isBlank()) {
             endpointMode = MODE_SYNC;
@@ -76,6 +77,9 @@ public record Capability(
         }
         if (pollTimeoutMs <= 0) {
             pollTimeoutMs = DEFAULT_POLL_TIMEOUT_MS;
+        }
+        if (enabled == null) {
+            enabled = true;
         }
     }
 
