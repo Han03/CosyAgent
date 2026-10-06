@@ -1,8 +1,15 @@
 # CosyAgent
 
-基于 **Spring AI** 构建的企业级 **ReAct 智能体（Agent）** 系统。整合 Redis 多层记忆、PGVector 向量检索、Resilience4j 容错机制，实现模型自主任务规划、工具调用、多轮迭代与状态持久化。
+基于 **Spring AI** 的企业级 **ReAct 智能体（Agent）** 系统，配 Flutter 桌面/移动客户端。整合 Redis 多层记忆、PGVector 向量检索、Resilience4j 容错机制，实现模型自主任务规划、工具调用、多轮迭代与状态持久化。
 
-> 完整设计请阅读 [docs/CosyAgent设计方案.md](docs/CosyAgent设计方案.md)
+## 核心能力
+
+- **ReAct 编排**：思考 → 工具调用 → 观察 → 收敛的多轮自主执行，工具桥接复用 Spring AI 函数调用机制
+- **模型路由**：模型平台与路由规则前端可视化配置，Auto 决策层按任务标签与调用统计自动选路，支持按序降级
+- **LLM Mock**：开关式端到端模拟，无需任何 API Key 即可跑通全链路（含随机性与延迟模拟）
+- **多层记忆 / 向量知识库 / 容错**：Redis（工作/会话/长期）、PGVector 检索、Resilience4j（Retry / CircuitBreaker / RateLimiter / TimeLimiter / Bulkhead）
+- **调用留痕**：每次 LLM 调用的请求、响应与工具注入全量记录，用于问题排查
+- **双持久化**：`memory | mysql` 一键切换，MyBatis-Plus 收口业务 CRUD，Schema 自动迁移
 
 ## 技术栈
 
@@ -10,79 +17,26 @@
 | --- | --- | --- |
 | Java | 17 | 运行时 |
 | Spring Boot | 3.5.16 | 应用框架 |
-| Spring AI | 1.1.8 | LLM 接入、ChatClient、工具调用、向量存储抽象 |
-| Redis | 任意 6+ | 多层记忆（工作/会话/长期） |
-| PostgreSQL + PGVector | 任意 | 知识库向量检索 |
+| Spring AI | 1.1.8 | LLM 接入（OpenAI 协议）、ChatClient、工具调用、向量存储抽象 |
+| Redis | 6+ | 多层记忆（工作 / 会话 / 长期） |
+| PostgreSQL + PGVector | 16+ | 知识库向量检索 |
+| MySQL | 8.x | 业务数据持久化（MyBatis-Plus） |
+| MyBatis-Plus | 3.5.17 | 业务 CRUD 统一收口 |
 | Resilience4j | 2.4.0 | Retry / CircuitBreaker / RateLimiter / TimeLimiter / Bulkhead |
+| Flutter | 3.x | 桌面端 + 移动端客户端（CosyAgentClient） |
 
-## 模块结构
+## 快速启动（Mock 模式）
 
-```
-src/main/java/com/cosy/agent
-├── common/          # 统一响应、错误码（含 UNAUTHORIZED/TASK_NOT_FOUND）、全局异常
-├── config/          # AgentProperties（含 Mock 嵌套配置）、VectorProperties、TaskProperties、SecurityProperties、MockChatConfig
-├── security/        # ApiKeyFilter（Step 6：COSY_AGENT_API_KEY 配置后拦截 /api/** 校验 X-API-Key）
-├── agent/
-│   ├── core/        # AgentState / AgentMessage / AgentContext / ReActAgent + DefaultReActAgent（Step 2/3/4/5 记忆+RAG+容错集成；Step 6 历史注入）
-│   ├── tool/        # AgentTool 契约（retryable）+ ToolRegistry + AgentToolBridging（Step 2 桥接 FunctionTool）
-│   ├── memory/      # MemoryLevel / MemoryStore 契约 + RedisMemoryStore（Step 3 已实现，MEMORY 容错接线）
-│   ├── mock/        # MockChatModelDecorator + MockScriptEngine + 剧本库（Step M 已实现）
-│   ├── vector/      # 切分/向量化 + InMemory/PGVector 双存储 + RAG 注入（Step 4 已实现，VECTOR 容错接线）
-│   ├── task/        # AgentTask + TaskStore + InMemoryTaskStore / JdbcTaskStore（Step 6：任务状态机与轨迹持久化，TASK 容错接线）
-│   └── resilience/  # ResilienceTarget + ResilienceSupport 组合链（Step 5 已实现：重试/熔断/限流/超时/舱壁）
-├── service/         # AgentOrchestrator 编排入口（Step 6：INIT→RUNNING→终态 + resume 断点恢复）
-└── controller/      # /api/agent/** HTTP 接口（chat/tools/status/knowledge + Step 6 tasks/{taskId}/tasks/resume）
-```
-
-## 快速开始
+无需 API Key，也无需 Redis / PG / MySQL，一条命令即可体验完整 Agent 流程：
 
 ```bash
-# 1. 配置环境变量（或直接修改 application.yml 默认值）
-export OPENAI_BASE_URL=https://api.openai.com
-export OPENAI_API_KEY=sk-xxx
-export OPENAI_CHAT_MODEL=gpt-4o-mini
-export REDIS_HOST=localhost
-export REDIS_PORT=6379
-
-# 2. 启动（二选一）
-#   A. 真实 LLM：配置真实 Key（Redis 为记忆存储，需启动；不可用时记忆自动降级）
-export OPENAI_API_KEY=sk-xxx
-redis-server --daemonize yes   # 或使用 Docker / 云 Redis
+# 1. 启动后端（memory 模式，零外部依赖）
 mvn spring-boot:run
-#   B. Mock 模式：无 Key 跑通全链路（含随机性演示；可配合 scripted+seed 复现）
-COSY_AGENT_MOCK_ENABLED=true mvn spring-boot:run
 
-# 3. 知识库（可选）：入库 → 检索 → 问答自动注入 RAG
-curl -X POST http://localhost:8080/api/agent/knowledge/upsert \
-  -H 'Content-Type: application/json' \
-  -d '{"namespace":"hr","docId":"kb-1","content":"重置企业账号密码的操作步骤：登录管理后台，进入安全设置，点击密码重置，通过手机验证码验证身份后设置新密码。"}'
-curl -X POST http://localhost:8080/api/agent/knowledge/search \
-  -H 'Content-Type: application/json' -d '{"namespace":"hr","query":"如何重置密码","topK":3}'
-
-# 4. 验证
-curl http://localhost:8080/actuator/health
-curl http://localhost:8080/api/agent/tools
-curl -X POST http://localhost:8080/api/agent/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"sessionId":"demo-1","message":"现在几点？"}'      # 返回 data.taskId
-curl http://localhost:8080/api/agent/tasks/<taskId>        # 任务详情（含轨迹审计）
-curl "http://localhost:8080/api/agent/tasks?sessionId=demo-1"  # 会话任务列表
-curl -X POST http://localhost:8080/api/agent/tasks/<taskId>/resume \
-  -H 'Content-Type: application/json' -d '{"message":"继续"}'  # 断点恢复
+# 2. 启动客户端（另开终端）
+cd ../CosyAgentClient
+flutter run -d windows
 ```
 
-> 说明：`/api/agent/chat` 需配置真实 `OPENAI_API_KEY` 才能走通真实 LLM 推理；无 Key 时可开启 `COSY_AGENT_MOCK_ENABLED=true` 走 Mock 模式（剧本引擎替代模型推理，工具执行/ReAct 编排/记忆/知识检索/任务持久化全链路真实运行，`mode=random` 演示随机性、`mode=scripted`+seed 可复现，详见 `docs/LLM Mock 端到端模块设计方案.md`）。知识检索默认内存实现（无外部依赖）；`COSY_AGENT_VECTOR_STORE=pgvector` 切换 PostgreSQL + PGVector 生产形态；任务持久化默认内存，`COSY_AGENT_TASK_STORE=pg` 切换 PostgreSQL 任务表/轨迹表（生产形态）；配置 `COSY_AGENT_API_KEY` 后 `/api/**` 需携带 `X-API-Key` 请求头。
+连接真实模型与数据库：客户端「设置」中配置模型平台 API Key 与路由；业务数据持久化设置 `COSY_AGENT_PERSISTENCE=mysql`。
 
-## Docker / K8s 部署
-
-```bash
-docker compose up -d --build     # Redis + PGVector + 应用（生产形态：向量检索与任务持久化均走 PostgreSQL）
-kubectl apply -f deploy/k8s/     # K8s：Secret/ConfigMap + 2 副本 Deployment + 探针 + ClusterIP Service
-```
-
-## 测试
-
-```bash
-mvn test               # 70 项：上下文加载 + 工具 + ReAct + 记忆 + Mock + 容错 + 知识检索 + 任务存储 + 编排状态机 + 鉴权
-REDIS_IT=true PGVECTOR_IT=true TASK_IT=true mvn test # 全量 78 项：追加真实 Redis（3）+ 真实 PGVector（3）+ JdbcTaskStore（2）集成测试（需本地 Redis/PostgreSQL+pgvector）
-```
