@@ -7,7 +7,7 @@ import java.util.Map;
  * 能力持久化接口（仅 CP 模式提供者需要落库；AP 全程由 Registry 内存权威管理）。
  *
  * <p>实现：{@link MemoryCapabilityStore}（默认，仅内存镜像）与
- * {@link MysqlCapabilityStore}（store=mysql，落库 + 启动恢复）。</p>
+ * {@link com.cosy.agent.persistence.store.MybatisCapabilityStore}（persistence=mysql，落库 + 启动恢复）。</p>
  */
 public interface CapabilityStore {
 

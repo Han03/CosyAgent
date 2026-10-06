@@ -5,16 +5,11 @@ import com.cosy.agent.agent.resilience.ResilienceTarget;
 import com.cosy.agent.config.VectorProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -23,52 +18,41 @@ import java.util.Map;
  * PostgreSQL + pgvector 扩展，表 vector_doc（namespace、doc_id、content、metadata、embedding vector(256)），
  * 余弦距离（&lt;=&gt;）检索 + 命名空间隔离 + TopK/阈值过滤。
  *
- * 依赖原生 JDBC（连接参数走 cosy.agent.vector.pg.*），不触发 Spring DataSource 自动配置，
- * 未安装 PostgreSQL 时应用默认 memory 模式不受影响。生产可替换为连接池（HikariCP）。
- * Step 5 起入库与检索落在 VECTOR 容错落点（重试/熔断/超时），PG 故障不雪崩。
+ * <p>v2 方案改造：连接层由手写 JDBC 直连换成 {@link JdbcTemplate}（pg 连接池，
+ * 见 persistence.config.PgJdbcConfig），SQL 与参数化语义不变；未安装 PostgreSQL 时
+ * 应用默认 memory 模式不受影响（本类不装配）。入库与检索落在 VECTOR 容错落点。</p>
  */
 @Component
 @ConditionalOnProperty(prefix = "cosy.agent.vector", name = "store", havingValue = "pgvector")
-public class PgVectorKnowledgeStore implements VectorKnowledgeStore, DisposableBean {
+public class PgVectorKnowledgeStore implements VectorKnowledgeStore {
 
     private static final Logger log = LoggerFactory.getLogger(PgVectorKnowledgeStore.class);
     private static final int DIM = 256;
 
-    private final String url;
-    private final String username;
-    private final String password;
+    private final JdbcTemplate jdbc;
     private final ResilienceSupport resilience;
 
-    public PgVectorKnowledgeStore(VectorProperties properties, ResilienceSupport resilience) {
-        VectorProperties.Pg pg = properties.pg();
-        this.url = pg.url();
-        this.username = pg.username();
-        this.password = pg.password();
+    public PgVectorKnowledgeStore(VectorProperties properties,
+                                  @Qualifier("pgJdbcTemplate") JdbcTemplate pgJdbcTemplate,
+                                  ResilienceSupport resilience) {
+        this.jdbc = pgJdbcTemplate;
         this.resilience = resilience;
-        initSchema();
+        initSchema(properties.pg().url());
     }
 
-    private Connection open() throws SQLException {
-        return DriverManager.getConnection(url, username, password);
-    }
-
-    private void initSchema() {
-        try (Connection conn = open()) {
-            conn.createStatement().execute("CREATE EXTENSION IF NOT EXISTS vector");
-            conn.createStatement().execute("""
-                    CREATE TABLE IF NOT EXISTS vector_doc (
-                        namespace  TEXT NOT NULL,
-                        doc_id     TEXT NOT NULL,
-                        content    TEXT NOT NULL,
-                        metadata   JSONB,
-                        embedding  VECTOR(%d) NOT NULL,
-                        PRIMARY KEY (namespace, doc_id)
-                    )
-                    """.formatted(DIM));
-            log.info("PGVector schema ready at {}", url);
-        } catch (SQLException e) {
-            throw new IllegalStateException("初始化 PGVector 失败（检查 PostgreSQL 与 pgvector 扩展）：" + e.getMessage(), e);
-        }
+    private void initSchema(String url) {
+        jdbc.execute("CREATE EXTENSION IF NOT EXISTS vector");
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS vector_doc (
+                    namespace  TEXT NOT NULL,
+                    doc_id     TEXT NOT NULL,
+                    content    TEXT NOT NULL,
+                    metadata   JSONB,
+                    embedding  VECTOR(%d) NOT NULL,
+                    PRIMARY KEY (namespace, doc_id)
+                )
+                """.formatted(DIM));
+        log.info("PGVector schema ready at {}", url);
     }
 
     @Override
@@ -80,16 +64,8 @@ public class PgVectorKnowledgeStore implements VectorKnowledgeStore, DisposableB
                 DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding
                 """;
         resilience.execute(ResilienceTarget.VECTOR, () -> {
-            try (Connection conn = open(); PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, namespace);
-                ps.setString(2, docId);
-                ps.setString(3, content);
-                ps.setString(4, toJson(metadata));
-                ps.setString(5, toVectorLiteral(vectorize(content)));
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                throw new IllegalStateException("PGVector upsert 失败：" + e.getMessage(), e);
-            }
+            jdbc.update(sql, namespace, docId, content,
+                    toJson(metadata), toVectorLiteral(vectorize(content)));
             return null;
         });
     }
@@ -105,23 +81,9 @@ public class PgVectorKnowledgeStore implements VectorKnowledgeStore, DisposableB
                 """;
         return resilience.execute(ResilienceTarget.VECTOR, () -> {
             String queryLiteral = toVectorLiteral(vectorize(query));
-            try (Connection conn = open(); PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, queryLiteral);
-                ps.setString(2, namespace);
-                ps.setString(3, queryLiteral);
-                ps.setDouble(4, minScore);
-                ps.setString(5, queryLiteral);
-                ps.setInt(6, Math.max(0, topK));
-                List<KnowledgeHit> hits = new ArrayList<>();
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        hits.add(new KnowledgeHit(rs.getString("doc_id"), rs.getString("content"), rs.getDouble("score")));
-                    }
-                }
-                return hits;
-            } catch (SQLException e) {
-                throw new IllegalStateException("PGVector 检索失败：" + e.getMessage(), e);
-            }
+            return jdbc.query(sql, (rs, i) -> new KnowledgeHit(
+                            rs.getString("doc_id"), rs.getString("content"), rs.getDouble("score")),
+                    queryLiteral, namespace, queryLiteral, minScore, queryLiteral);
         });
     }
 
@@ -152,10 +114,5 @@ public class PgVectorKnowledgeStore implements VectorKnowledgeStore, DisposableB
             sb.append('"').append(key.replace("\"", "\\\"")).append("\":\"").append(String.valueOf(value).replace("\"", "\\\"")).append('"');
         });
         return sb.append('}').toString();
-    }
-
-    @Override
-    public void destroy() {
-        // 无池化连接，无需释放；连接均 try-with-resources 关闭
     }
 }

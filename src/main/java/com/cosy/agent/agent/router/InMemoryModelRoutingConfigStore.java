@@ -7,11 +7,11 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 内存配置存储（默认，cosy.agent.model-routing.store=memory）：
+ * 内存配置存储（默认，cosy.agent.persistence=memory）：
  * 运行时内存态，管理 API 更新后当前进程即时生效；重启回 YAML 基线。
  */
 @Component
-@ConditionalOnProperty(prefix = "cosy.agent.model-routing", name = "store",
+@ConditionalOnProperty(prefix = "cosy.agent.persistence", name = "store",
         havingValue = "memory", matchIfMissing = true)
 public class InMemoryModelRoutingConfigStore implements ModelRoutingConfigStore {
 

@@ -8,7 +8,7 @@
  *       {@link com.cosy.agent.agent.capability.CapabilityStatus} —— 核心模型（能力 = Agent 的一个远程工具）</li>
  *   <li>{@link com.cosy.agent.agent.capability.CapabilityStore} —— 持久化接口，
  *       实现 {@link com.cosy.agent.agent.capability.MemoryCapabilityStore}（默认）/
- *       {@link com.cosy.agent.agent.capability.MysqlCapabilityStore}（CP 落库 + 启动恢复）</li>
+ *       {@link com.cosy.agent.persistence.store.MybatisCapabilityStore}（persistence=mysql，CP 落库 + 启动恢复）</li>
  *   <li>{@link com.cosy.agent.agent.capability.CapabilityRegistry} —— 核心：注册/心跳/注销/寻址候选链/
  *       心跳摘除(AP)/主动探测(CP)/工具动态同步</li>
  *   <li>{@link com.cosy.agent.agent.capability.CapabilityProxyTool} —— 远程能力代理工具

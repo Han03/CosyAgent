@@ -12,8 +12,8 @@ import java.util.Optional;
  *
  * <p>持久化层抽象，提供两种实现：
  * {@code InMemoryTaskStore}（默认，无外部依赖，供单测与轻量运行）与
- * {@code JdbcTaskStore}（PostgreSQL 生产形态，cosy.agent.task.store=pg 时装配，
- * 表 agent_task / agent_trace，见设计方案 §8）。</p>
+ * {@code MybatisTaskStore}（MySQL 持久化形态，cosy.agent.persistence=mysql 时装配，
+ * 表 agent_task / agent_trace，MyBatis-Plus + spring-jdbc 连接池）。</p>
  */
 public interface TaskStore {
 

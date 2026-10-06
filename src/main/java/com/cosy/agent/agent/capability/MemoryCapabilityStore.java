@@ -1,18 +1,19 @@
 package com.cosy.agent.agent.capability;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * 内存能力存储（默认，cosy.agent.capability.store=memory）：
+ * 内存能力存储（默认，cosy.agent.persistence=memory）：
  * 仅内存镜像，不落库（重启即失）。AP 模式全程由 Registry 内存权威管理，本实现仅兜底 CP 语义。
- * 配置驱动二选一：当存在其他持久化 CapabilityStore（如 store=mysql）时本实现不装配。
+ * 与 MybatisCapabilityStore（persistence=mysql）按开关互斥装配。
  */
 @Component
-@ConditionalOnMissingBean(CapabilityStore.class)
+@ConditionalOnProperty(prefix = "cosy.agent.persistence", name = "store",
+        havingValue = "memory", matchIfMissing = true)
 public class MemoryCapabilityStore implements CapabilityStore {
 
     @Override

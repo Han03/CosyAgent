@@ -24,6 +24,14 @@ spring:
 
 cosy:
   agent:
+    persistence:
+      # v2 统一持久化开关：memory（默认，无外部依赖，重启即失）| mysql（业务数据落 MySQL，
+      # 由 MyBatis-Plus + spring-jdbc 管理连接池，建表自动迁移，能力/路由/任务/LLM 调用记录全部落库）
+      store: ${COSY_AGENT_PERSISTENCE:memory}
+      mysql:
+        url: ${COSY_AGENT_PERSISTENCE_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+        username: ${COSY_AGENT_PERSISTENCE_MYSQL_USER:cosy}
+        password: ${COSY_AGENT_PERSISTENCE_MYSQL_PASSWORD:cosy}
     max-iterations: 8        # ReAct 最大迭代轮数（Step 2 生效）
     tool-timeout: 30s        # 单次工具调用超时（Step 5 生效）
     session-timeout: 30m     # 会话记忆 TTL（Step 3 生效）
@@ -63,11 +71,10 @@ cosy:
         error: 0.05          # 模型异常（FAILED 终止路径）
     model-routing:
       # 模型路由（Step R）：多平台候选链 + 按顺序降级；配置权威在后端
-      # （YAML 基线 + 管理 API 热更新，store 持久化可选）。请求头 X-Cosy-Model:
-      # auto（缺省）| platform/model 指定模型（锁定单候选，不跨模型降级）。
+      # （YAML 基线 + 管理 API 热更新，持久化随 cosy.agent.persistence=mysql）。
+      # 请求头 X-Cosy-Model: auto（缺省）| platform/model 指定模型（锁定单候选，不跨模型降级）。
       enabled: ${COSY_MODEL_ROUTING_ENABLED:true}
       max-candidates: ${COSY_MODEL_ROUTING_MAX_CANDIDATES:5}   # 单链候选上限
-      store: ${COSY_MODEL_ROUTING_STORE:memory}                # memory | pg | mysql
       platforms:
         aliyun:                       # 阿里云百炼（OpenAI 兼容；端点 {base}/v1/chat/completions）
           base-url: ${COSY_ALIYUN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
@@ -115,31 +122,10 @@ cosy:
           keywords: ["写", "创作", "故事", "文案", "润色", "小说", "诗句", "write", "story", "creative", "poem"]
       # scoring 档位的打分权重（缺省键用默认：reasoning .3 / tools .2 / context .2 / reliability .15 / speed .1 / price .05）
       # scoring-weights: { reasoning: 0.3, tools: 0.2, context: 0.2, reliability: 0.15, speed: 0.1, price: 0.05 }
-      pg:
-        # store=pg 时生效（原生 JDBC，与 task store 同库同源）
-        url: ${COSY_MODEL_ROUTING_PG_URL:jdbc:postgresql://localhost:5432/cosy}
-        username: ${COSY_MODEL_ROUTING_PG_USER:postgres}
-        password: ${COSY_MODEL_ROUTING_PG_PASSWORD:postgres}
-      mysql:
-        # store=mysql 时生效
-        url: ${COSY_MODEL_ROUTING_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-        username: ${COSY_MODEL_ROUTING_MYSQL_USER:cosy}
-        password: ${COSY_MODEL_ROUTING_MYSQL_PASSWORD:cosy}
     task:
-      # 任务状态持久化（Step 6）：store=memory 为内存实现（默认，无外部依赖，重启即失）；
-      # store=pg 走 PostgreSQL（生产形态，表 agent_task/agent_trace 自建，需 PostgreSQL 运行）；
-      # store=mysql 走 MySQL 存储业务数据（同构表结构，需 MySQL 运行）
-      store: ${COSY_AGENT_TASK_STORE:memory}
-      pg:
-        # store=pg 时生效（原生 JDBC，不触发 DataSource 自动配置）
-        url: ${COSY_AGENT_TASK_PG_URL:jdbc:postgresql://localhost:5432/cosy}
-        username: ${COSY_AGENT_TASK_PG_USER:postgres}
-        password: ${COSY_AGENT_TASK_PG_PASSWORD:postgres}
-      mysql:
-        # store=mysql 时生效（原生 JDBC，不触发 DataSource 自动配置）
-        url: ${COSY_AGENT_TASK_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-        username: ${COSY_AGENT_TASK_MYSQL_USER:cosy}
-        password: ${COSY_AGENT_TASK_MYSQL_PASSWORD:cosy}
+      # 任务状态持久化（Step 6）：随 cosy.agent.persistence 统一开关——memory 内存实现
+      # （默认，无外部依赖，重启即失）；mysql 落 MySQL（表 agent_task/agent_trace 自动迁移）。
+      # 注：v2 已删除 PostgreSQL 方言版任务存储（MySQL 为主 + Memory 兜底）。
     security:
       # API 鉴权（Step 6 生产化）：配置后 /api/** 需携带 X-API-Key 请求头；
       # 留空（默认）不启用，便于本地开发与测试。
@@ -167,17 +153,11 @@ cosy:
         # CP 主动健康检查：周期探测 {baseUrl}/healthz，失败标 DOWN（不摘除），恢复自动 UP
         enabled: ${COSY_AGENT_CAPABILITY_PROBE_ENABLED:true}
         interval: ${COSY_AGENT_CAPABILITY_PROBE_INTERVAL:60s}
-      # CP 持久化存储：memory（默认，仅内存）| mysql（落库 + 启动恢复）
-      store: ${COSY_AGENT_CAPABILITY_STORE:memory}
+      # CP 持久化：随 cosy.agent.persistence 统一开关（memory 仅内存 | mysql 落库 + 启动恢复）
       # 默认命名空间（注册未声明时兜底；能力全名 = {namespace}_{name}）
       namespace: ${COSY_AGENT_CAPABILITY_NAMESPACE:default}
       # 远程能力调用超时（HTTP 请求读超时，调用侧容错另有 TOOL TimeLimiter）
       call-timeout: ${COSY_AGENT_CAPABILITY_CALL_TIMEOUT:5s}
-      mysql:
-        # store=mysql 时生效（原生 JDBC，不触发 DataSource 自动配置）
-        url: ${COSY_AGENT_CAPABILITY_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-        username: ${COSY_AGENT_CAPABILITY_MYSQL_USER:cosy}
-        password: ${COSY_AGENT_CAPABILITY_MYSQL_PASSWORD:cosy}
     llmlog:
       # 大模型调用记录（旁路采集 llm_call_log，异步批量落库，不影响调用链）
       # enabled=false：不装配，模型调用无记录（行为与现状一致）
@@ -188,11 +168,7 @@ cosy:
       # 异步队列容量（满则丢弃并告警）与批量落库间隔
       queue-capacity: ${COSY_AGENT_LLMLOG_QUEUE_CAPACITY:10000}
       flush-interval-ms: ${COSY_AGENT_LLMLOG_FLUSH_INTERVAL_MS:5000}
-      mysql:
-        # 与路由/能力 store 同库（独立段便于覆写）；原生 JDBC
-        url: ${COSY_AGENT_LLMLOG_MYSQL_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-        username: ${COSY_AGENT_LLMLOG_MYSQL_USER:cosy}
-        password: ${COSY_AGENT_LLMLOG_MYSQL_PASSWORD:cosy}
+      # 落库目标：随 cosy.agent.persistence 统一开关（memory=不落库 | mysql=落 llm_call_log）
 
 server:
   port: ${SERVER_PORT:8080}

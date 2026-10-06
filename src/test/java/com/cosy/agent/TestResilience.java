@@ -1,11 +1,14 @@
 package com.cosy.agent;
 
 import com.cosy.agent.agent.resilience.ResilienceSupport;
+import com.zaxxer.hikari.HikariDataSource;
 import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+
+import javax.sql.DataSource;
 
 /**
  * 测试助手：构造"默认注册表"的 ResilienceSupport。
@@ -20,5 +23,16 @@ public final class TestResilience {
     public static ResilienceSupport defaultResilience() {
         return new ResilienceSupport(RetryRegistry.ofDefaults(), CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(), TimeLimiterRegistry.ofDefaults(), BulkheadRegistry.ofDefaults());
+    }
+
+    /** 测试用 PG 连接池（PGVECTOR_IT 集成测试） */
+    public static DataSource pgDataSource(String url, String username, String password) {
+        HikariDataSource ds = new HikariDataSource();
+        ds.setJdbcUrl(url);
+        ds.setUsername(username);
+        ds.setPassword(password);
+        ds.setPoolName("test-pg-vector");
+        ds.setMaximumPoolSize(2);
+        return ds;
     }
 }

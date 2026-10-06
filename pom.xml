@@ -80,11 +80,19 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- 业务数据 MySQL 存储（cosy.agent.task.store=mysql 时生效，原生 JDBC，同 PG 模式） -->
+        <!-- 业务数据 MySQL 存储（cosy.agent.persistence=mysql 时生效） -->
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- MyBatis-Plus（v2 方案：业务 CRUD 统一收口 MP，消除手写 JDBC；
+             DataSource 仅 persistence=mysql 时装配，memory 模式不触发 MyBatis 初始化） -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <version>3.5.17</version>
         </dependency>
 
         <dependency>

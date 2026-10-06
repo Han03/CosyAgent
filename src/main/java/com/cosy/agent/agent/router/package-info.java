@@ -1,14 +1,13 @@
 /**
  * 模型路由（Step R）：多平台候选链 + 顺序降级。配置权威在后端
- * （YAML 基线 + 管理 API 热更新，可持久化到 memory / pg / mysql）。
+ * （YAML 基线 + 管理 API 热更新，可持久化到 memory / mysql）。
  *
  * <p><b>包内阅读顺序</b></p>
  * <ol>
  *   <li>{@link com.cosy.agent.agent.router.RouteConfig} —— 配置模型（平台 + 路由链 + 候选解析）</li>
  *   <li>{@link com.cosy.agent.agent.router.ModelRoutingConfigStore} —— 配置持久化接口，
  *       实现 {@link com.cosy.agent.agent.router.InMemoryModelRoutingConfigStore} /
- *       {@link com.cosy.agent.agent.router.JdbcModelRoutingConfigStore} /
- *       {@link com.cosy.agent.agent.router.MysqlModelRoutingConfigStore}</li>
+ *       {@link com.cosy.agent.persistence.store.MybatisModelRoutingConfigStore}</li>
  *   <li>{@link com.cosy.agent.agent.router.ModelPlatformRegistry} —— ChatModel 工厂
  *       （按平台延迟构建 + 缓存，配置变更自动重建）</li>
  *   <li>{@link com.cosy.agent.agent.router.ModelRouter} —— 核心：解析候选链 → 依次调用 →

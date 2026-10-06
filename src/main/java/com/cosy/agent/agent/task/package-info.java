@@ -5,9 +5,9 @@
  * <ol>
  *   <li>{@link com.cosy.agent.agent.task.AgentTask} —— 任务记录（状态机字段）</li>
  *   <li>{@link com.cosy.agent.agent.task.TaskStore} —— 存储接口（含 SessionSummary / TaskDetail）</li>
- *   <li>{@link com.cosy.agent.agent.task.InMemoryTaskStore} —— 内存实现（默认）</li>
- *   <li>{@link com.cosy.agent.agent.task.JdbcTaskStore} / {@link com.cosy.agent.agent.task.MysqlJdbcTaskStore}
- *       —— PostgreSQL / MySQL 持久化实现（条件装配，原生 JDBC）</li>
+ *   <li>{@link com.cosy.agent.agent.task.InMemoryTaskStore} —— 内存实现（默认，persistence=memory）</li>
+ *   <li>{@link com.cosy.agent.persistence.store.MybatisTaskStore}
+ *       —— MySQL 持久化实现（persistence=mysql，MyBatis-Plus + spring-jdbc）</li>
  * </ol>
  *
  * <p><b>被依赖</b>：service.AgentOrchestrator 创建任务、续跑（resume）、

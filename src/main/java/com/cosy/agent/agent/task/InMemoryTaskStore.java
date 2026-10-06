@@ -17,10 +17,10 @@ import java.util.stream.Collectors;
 
 /**
  * 内存任务存储（默认实现，无外部依赖）：进程内保存任务主记录与轨迹，
- * 供单测、轻量运行与"未配置 PostgreSQL"时使用；重启即失，生产请切 JdbcTaskStore。
+ * 供单测、轻量运行与"未配置 MySQL"时使用；重启即失，生产请切 cosy.agent.persistence=mysql。
  */
 @Component
-@ConditionalOnProperty(prefix = "cosy.agent.task", name = "store", havingValue = "memory", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "cosy.agent.persistence", name = "store", havingValue = "memory", matchIfMissing = true)
 public class InMemoryTaskStore implements TaskStore {
 
     private static final AtomicLong SEQ = new AtomicLong();
