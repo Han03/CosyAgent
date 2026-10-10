@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 编排层任务状态机单测（Step 6）：chat 全链路落库（INIT→RUNNING→终态+轨迹）、
+ * 编排层任务状态机单测：chat 全链路落库（INIT→RUNNING→终态+轨迹）、
  * 失败任务终态、断点恢复（历史轨迹注入 + 新任务）。
  */
 class AgentOrchestratorTest {

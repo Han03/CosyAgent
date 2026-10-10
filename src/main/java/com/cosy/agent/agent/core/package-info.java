@@ -1,5 +1,5 @@
 /**
- * ReAct 智能体核心（Step 2 / Step 6）。
+ * ReAct 智能体核心（ / ）。
  *
  * <p>实现 Thought → Action → Observation 循环：模型自主规划、工具执行、
  * 携带记忆与知识上下文多轮迭代，直到产出最终答案或触发终止条件。</p>

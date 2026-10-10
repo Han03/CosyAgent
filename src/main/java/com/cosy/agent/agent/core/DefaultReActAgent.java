@@ -42,13 +42,13 @@ import java.util.Optional;
  * Observation 回传模型 → 重复，直至模型给出最终回答或触发终止条件。
  * 终止条件：最终回答 / 达到 max-iterations / LLM 调用异常。</p>
  *
- * <p>Step 3 记忆集成：运行前注入会话记忆与长期记忆到系统提示；
+ * <p> 记忆集成：运行前注入会话记忆与长期记忆到系统提示；
  * 运行后持久化最近对话（滚动窗口）与工作状态。记忆读写失败自动降级为无记忆直答。</p>
  *
- * <p>Step 4 RAG 集成：运行前以用户输入检索知识库（TopK + 阈值），命中注入系统提示；
+ * <p> RAG 集成：运行前以用户输入检索知识库（TopK + 阈值），命中注入系统提示；
  * 检索失败自动降级（跳过 RAG，不阻断推理）。</p>
  *
- * <p>Step 5 容错集成：LLM 推理与工具调用统一施加 Resilience4j 组合策略
+ * <p> 容错集成：LLM 推理与工具调用统一施加 Resilience4j 组合策略
  * （重试/熔断/限流/超时/舱壁）；熔断开启时返回友好降级文案，不雪崩。</p>
  */
 @Service
@@ -440,7 +440,7 @@ public class DefaultReActAgent implements ReActAgent {
         }
     }
 
-    /** 历史轨迹消息 → Spring AI Message（Step 6 断点恢复：USER/ASSISTANT/TOOL 三类） */
+    /** 历史轨迹消息 → Spring AI Message（ 断点恢复：USER/ASSISTANT/TOOL 三类） */
     private Message toSpringMessage(AgentMessage historic) {
         return switch (historic.role()) {
             case USER -> new UserMessage(historic.content());

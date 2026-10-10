@@ -5,7 +5,7 @@ import com.cosy.agent.agent.core.AgentState;
 import java.time.Instant;
 
 /**
- * 任务记录（Step 6 状态持久化，设计方案 §8）：一次 Agent 运行在持久化层的投影。
+ * 任务记录（ 状态持久化，设计方案 §8）：一次 Agent 运行在持久化层的投影。
  *
  * <p>状态机（复用 {@link AgentState}）：INIT（创建）→ RUNNING（执行中）→
  * COMPLETED / FAILED / TIMEOUT / CANCELLED（终态）；状态迁移由 AgentOrchestrator 驱动。</p>

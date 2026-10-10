@@ -1,7 +1,7 @@
 package com.cosy.agent.agent.resilience;
 
 /**
- * 容错落点（Step 5）：与设计方案 §7 策略落点矩阵一一对应。
+ * 容错落点：与设计方案 §7 策略落点矩阵一一对应。
  * 每个落点对应一组 Resilience4j 实例（命名约定 {@code <target>-retry / -cb / -ratelimit / -bulkhead / -timelimiter}）。
  */
 public enum ResilienceTarget {
@@ -9,5 +9,5 @@ public enum ResilienceTarget {
     TOOL,     // 工具调用：幂等工具重试 / 熔断 / 限流 / 超时 30s / 并发隔离
     MEMORY,   // Redis 记忆读写：重试 / 熔断 / 超时 2s
     VECTOR,   // 知识库检索：重试 / 熔断 / 超时 5s
-    TASK      // 任务/轨迹持久化（Step 6）：PostgreSQL 写入，重试 / 熔断 / 超时 2s
+    TASK      // 任务/轨迹持久化：PostgreSQL 写入，重试 / 熔断 / 超时 2s
 }

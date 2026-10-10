@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 工具注册表：统一管理 Agent 可用工具，支持注册、查找、列表。
- * 后续可扩展工具白名单、权限校验与调用审计（Step 2 / Step 6）。
+ * 后续可扩展工具白名单、权限校验与调用审计（ / ）。
  */
 @Component
 public class ToolRegistry {

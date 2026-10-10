@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Agent 编排入口（Step 6 起承载任务状态机）：承接请求 → 登记任务（INIT→RUNNING）→
+ * Agent 编排入口（ 起承载任务状态机）：承接请求 → 登记任务（INIT→RUNNING）→
  * 执行 ReAct 循环 → 落终态（COMPLETED / FAILED / TIMEOUT）+ 轨迹审计 → 返回结果。
  *
  * <p>任务/轨迹持久化失败不阻断对话（仅告警，结果照常返回）；

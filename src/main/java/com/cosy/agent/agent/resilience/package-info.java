@@ -1,5 +1,5 @@
 /**
- * 容错层（Step 5 启用）。
+ * 容错层（ 启用）。
  *
  * <ul>
  *   <li>LLM 调用：Retry + TimeLimiter + CircuitBreaker</li>

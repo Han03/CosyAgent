@@ -6,7 +6,7 @@ package com.cosy.agent.agent.core;
 public enum AgentState {
     /** 初始创建 */
     INIT,
-    /** 自主任务规划中（Step 2） */
+    /** 自主任务规划中 */
     PLANNING,
     /** 执行推理 / 工具调用中 */
     RUNNING,

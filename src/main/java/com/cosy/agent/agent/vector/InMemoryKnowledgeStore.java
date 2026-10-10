@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 内存向量知识库（默认实现，cosy.agent.vector.store=memory，无外部依赖）：
  * 命名空间隔离 + 余弦相似度检索（TopK + 最小分数阈值）。
- * Step 5 起读写落在 VECTOR 容错落点。用于本地全链路演示与集成测试；生产形态见 PgVectorKnowledgeStore。
+ *  起读写落在 VECTOR 容错落点。用于本地全链路演示与集成测试；生产形态见 PgVectorKnowledgeStore。
  */
 @Component
 @ConditionalOnProperty(prefix = "cosy.agent.vector", name = "store", havingValue = "memory", matchIfMissing = true)

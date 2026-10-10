@@ -1,5 +1,5 @@
 /**
- * 向量检索层（Step 4）：PGVector 知识库 RAG。
+ * 向量检索层：PGVector 知识库 RAG。
  *
  * <p><b>包内阅读顺序</b></p>
  * <ol>

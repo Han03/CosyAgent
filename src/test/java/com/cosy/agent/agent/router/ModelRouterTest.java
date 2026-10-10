@@ -1,6 +1,8 @@
 package com.cosy.agent.agent.router;
 
 import com.cosy.agent.TestResilience;
+import com.openai.errors.OpenAIException;
+import com.openai.errors.OpenAIIoException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -9,8 +11,6 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.ResourceAccessException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,7 +69,7 @@ class ModelRouterTest {
 
     @Test
     void firstCandidateFailsThenFallsBackToNextCandidate() {
-        when(modelA.call(any(Prompt.class))).thenThrow(new ResourceAccessException("connection refused"));
+        when(modelA.call(any(Prompt.class))).thenThrow(new OpenAIIoException("connection refused"));
         when(modelB.call(any(Prompt.class))).thenReturn(response("second candidate ok"));
 
         RouteResult result = routerWith(true).call(new Prompt("hi", OpenAiChatOptions.builder().build()), "auto");
@@ -83,7 +83,7 @@ class ModelRouterTest {
 
     @Test
     void explicitModelChoiceLocksSingleCandidateWithoutCrossModelFallback() {
-        when(modelB.call(any(Prompt.class))).thenThrow(new ResourceAccessException("connection refused"));
+        when(modelB.call(any(Prompt.class))).thenThrow(new OpenAIIoException("connection refused"));
 
         assertThatThrownBy(() -> routerWith(true)
                 .call(new Prompt("hi", OpenAiChatOptions.builder().build()), "openai/gpt-4o"))
@@ -96,8 +96,8 @@ class ModelRouterTest {
 
     @Test
     void allCandidatesFailThrowsAggregateException() {
-        when(modelA.call(any(Prompt.class))).thenThrow(new ResourceAccessException("conn A"));
-        when(modelB.call(any(Prompt.class))).thenThrow(new ResourceAccessException("conn B"));
+        when(modelA.call(any(Prompt.class))).thenThrow(new OpenAIIoException("conn A"));
+        when(modelB.call(any(Prompt.class))).thenThrow(new OpenAIIoException("conn B"));
 
         assertThatThrownBy(() -> routerWith(true)
                 .call(new Prompt("hi", OpenAiChatOptions.builder().build()), "auto"))
@@ -107,12 +107,14 @@ class ModelRouterTest {
 
     @Test
     void clientErrorDoesNotTriggerFallback() {
+        // Spring AI 2.0 底层为 openai-java SDK：4xx 等客户端错误由 OpenAIServiceException
+        // 子类承载（含 statusCode）；测试以无状态码的基类 OpenAIException 模拟"不可降级异常"
         when(modelA.call(any(Prompt.class)))
-                .thenThrow(new HttpClientErrorException(org.springframework.http.HttpStatus.BAD_REQUEST));
+                .thenThrow(new OpenAIException("400 Bad Request"));
 
         assertThatThrownBy(() -> routerWith(true)
                 .call(new Prompt("hi", OpenAiChatOptions.builder().build()), "auto"))
-                .isInstanceOf(HttpClientErrorException.class);
+                .isInstanceOf(OpenAIException.class);
 
         verify(modelB, never()).call(any(Prompt.class));
     }

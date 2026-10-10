@@ -26,7 +26,7 @@ public record RouteConfig(
 
     private static final Logger log = LoggerFactory.getLogger(RouteConfig.class);
 
-    /** 对话补全端点路径默认值（Spring AI OpenAiApi 约定） */
+    /** 对话补全端点路径默认值（1.x Spring AI OpenAiApi 约定；2.0 中并入 SDK baseUrl） */
     public static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
 
     /** 平台注册项（name 为 Map key 冗余保留，便于序列化/校验） */

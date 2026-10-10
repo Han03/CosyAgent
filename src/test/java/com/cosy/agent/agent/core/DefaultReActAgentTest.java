@@ -48,8 +48,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * ReAct 循环单元测试：以脚本化 ChatModel 桩驱动，验证
- * 工具调用 → Observation 回传 → 最终回答 / 终止条件，以及 Step 3 记忆注入与持久化、
- * Step 4 RAG 注入、Step 5 容错（重试自愈 / 熔断降级）。
+ * 工具调用 → Observation 回传 → 最终回答 / 终止条件，以及  记忆注入与持久化、
+ *  RAG 注入、 容错（重试自愈 / 熔断降级）。
  */
 class DefaultReActAgentTest {
 
@@ -276,7 +276,7 @@ class DefaultReActAgentTest {
 
     @Test
     void injectsHistoryIntoModelContextOnResume() {
-        // Step 6 断点恢复：历史 USER/ASSISTANT/TOOL 消息注入模型上下文（系统提示之后、本次输入之前）
+        //  断点恢复：历史 USER/ASSISTANT/TOOL 消息注入模型上下文（系统提示之后、本次输入之前）
         when(modelRouter.call(any(Prompt.class), any(), any())).thenReturn(route(response("恢复后继续回答。")));
         List<AgentMessage> history = List.of(
                 AgentMessage.user("第一步问题"),

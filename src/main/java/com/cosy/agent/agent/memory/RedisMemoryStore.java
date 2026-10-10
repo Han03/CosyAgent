@@ -13,12 +13,12 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * 基于 Redis 的多层记忆实现（Step 3）。
+ * 基于 Redis 的多层记忆实现。
  *
  * <p>Key 设计：{@code cosy:{level}:{namespace}:{key}}；TTL 分层：
  * WORKING → working-timeout，SESSION → session-timeout，LONG_TERM → long-term-timeout。
  * 条目以 Redis String 存储；列表为前缀键扫描，检索为关键词包含过滤。
- * Step 5 起全部读写落在 MEMORY 容错落点（重试/熔断/超时），故障不雪崩。</p>
+ *  起全部读写落在 MEMORY 容错落点（重试/熔断/超时），故障不雪崩。</p>
  */
 @Component
 public class RedisMemoryStore implements MemoryStore {

@@ -3,7 +3,8 @@ package com.cosy.agent.agent.router;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,10 +54,29 @@ class TaskTagResolverTest {
         return new RouteContext("auto", null,
                 List.of(new UserMessage(userText + "啊".repeat(chars))),
                 IntStream.range(0, toolCount)
-                        .mapToObj(i -> new OpenAiApi.FunctionTool(
-                                new OpenAiApi.FunctionTool.Function("t" + i, "d", Map.of(), null)))
+                        .mapToObj(i -> dummyTool("t" + i))
                         .toList(),
                 0);
+    }
+
+    /** 仅用于工具数量统计的哑 ToolCallback（schema 足够即可） */
+    private static ToolCallback dummyTool(String name) {
+        ToolDefinition td = ToolDefinition.builder()
+                .name(name)
+                .description("d")
+                .inputSchema("{\"type\":\"object\",\"properties\":{}}")
+                .build();
+        return new ToolCallback() {
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return td;
+            }
+
+            @Override
+            public String call(String arguments) {
+                throw new UnsupportedOperationException();
+            }
+        };
     }
 
     @Test

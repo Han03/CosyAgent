@@ -9,7 +9,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 内存任务存储单测（Step 6）：状态流转、轨迹追加幂等、查询与会话列表。
+ * 内存任务存储单测：状态流转、轨迹追加幂等、查询与会话列表。
  */
 class InMemoryTaskStoreTest {
 

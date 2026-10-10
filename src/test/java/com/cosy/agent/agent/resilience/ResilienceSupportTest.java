@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * ResilienceSupport 组合策略测试（Step 5）：
+ * ResilienceSupport 组合策略测试：
  * 重试（瞬时故障自愈）、熔断（打开后快速失败）、限流（超限拒绝）、
  * 超时（慢调用中断）、舱壁（并发隔离）五条策略各自生效。
  */

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 向量知识库契约（Step 4 基于 Spring AI PgVectorStore 实现）。
+ * 向量知识库契约（ 基于 Spring AI PgVectorStore 实现）。
  */
 public interface VectorKnowledgeStore {
 

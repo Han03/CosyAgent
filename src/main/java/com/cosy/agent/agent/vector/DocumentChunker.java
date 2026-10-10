@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * 文档切分器：长文档按段落聚合至 {@code chunkSize}，超长段落硬切，
- * 相邻块保留 {@code overlap} 字符重叠，避免语义断裂（Step 4 入库管线第一步）。
+ * 相邻块保留 {@code overlap} 字符重叠，避免语义断裂（ 入库管线第一步）。
  */
 @Component
 public class DocumentChunker {

@@ -6,6 +6,7 @@ import com.cosy.agent.agent.llmlog.LLMCallContext;
 import com.cosy.agent.agent.llmlog.LlmCallLog;
 import com.cosy.agent.agent.llmlog.LlmCallLogStore;
 import com.cosy.agent.config.LlmCallLogProperties;
+import com.openai.errors.OpenAIIoException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -14,7 +15,6 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.web.client.ResourceAccessException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -129,7 +129,7 @@ class LlmCallLogRecorderTest {
         routes.put(RouteConfig.DEFAULT_ROUTE, List.of("p1/m1", "p1/m2"));
         RouteConfig cfg = new RouteConfig(true, 5, platforms, routes);
         when(modelA.call(any(Prompt.class)))
-                .thenThrow(new ResourceAccessException("connect failed"));
+                .thenThrow(new OpenAIIoException("connect failed"));
         when(modelB.call(any(Prompt.class))).thenReturn(
                 new ChatResponse(List.of(new Generation(
                         AssistantMessage.builder().content("ok").build()))));
@@ -167,8 +167,8 @@ class LlmCallLogRecorderTest {
         Map<String, List<String>> routes = new LinkedHashMap<>();
         routes.put(RouteConfig.DEFAULT_ROUTE, List.of("p1/m1", "p1/m2"));
         RouteConfig cfg = new RouteConfig(true, 5, platforms, routes);
-        when(modelA.call(any(Prompt.class))).thenThrow(new ResourceAccessException("connect failed"));
-        when(modelB.call(any(Prompt.class))).thenThrow(new ResourceAccessException("connect failed too"));
+        when(modelA.call(any(Prompt.class))).thenThrow(new OpenAIIoException("connect failed"));
+        when(modelB.call(any(Prompt.class))).thenThrow(new OpenAIIoException("connect failed too"));
         ModelPlatformRegistry registry = new ModelPlatformRegistry(
                 OpenAiChatOptions.builder().build(),
                 (pf, m) -> "m2".equals(m) ? modelB : modelA);

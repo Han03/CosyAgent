@@ -16,11 +16,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * API 密钥鉴权过滤器（Step 6 生产化）：配置 cosy.agent.security.api-key 后启用，
+ * API 密钥鉴权过滤器（ 生产化）：配置 cosy.agent.security.api-key 后启用，
  * 对 /api/** 请求校验 X-API-Key 请求头；未匹配返回 401。
  *
  * <p>actuator 探针与健康检查路径放行（不拦 /actuator、/error），便于 K8s 存活探针；
- * 未配置密钥（默认）时过滤器不注册，行为与 Step 5 前一致。</p>
+ * 未配置密钥（默认）时过滤器不注册，行为与  前一致。</p>
  */
 @Component
 @ConditionalOnExpression("!'${cosy.agent.security.api-key:}'.isBlank()")

@@ -26,7 +26,7 @@ public record AgentContext(
         return new AgentContext(sessionId, userId, new ConcurrentHashMap<>(), maxIterations, null, null, null);
     }
 
-    /** 创建带任务 ID 的上下文（Step 6：编排层持久化任务时透传 taskId） */
+    /** 创建带任务 ID 的上下文（编排层持久化任务时透传 taskId） */
     public static AgentContext create(String sessionId, String userId, int maxIterations, String taskId) {
         return create(sessionId, userId, maxIterations, taskId, null, null);
     }

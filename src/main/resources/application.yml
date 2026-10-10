@@ -10,9 +10,9 @@ spring:
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       api-key: ${OPENAI_API_KEY:sk-demo}
       chat:
-        options:
-          model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
-          temperature: 0.2
+        # Spring AI 2.0：模型配置属性扁平化（不再使用 .options 前缀）
+        model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+        temperature: 0.2
   data:
     redis:
       # Redis 多层记忆存储（Step 3 生效）；服务不可用时记忆自动降级，不影响基础问答

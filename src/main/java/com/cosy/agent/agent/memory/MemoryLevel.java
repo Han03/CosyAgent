@@ -1,7 +1,7 @@
 package com.cosy.agent.agent.memory;
 
 /**
- * Redis 多层记忆分级（Step 3 实现 RedisMemoryStore）。
+ * Redis 多层记忆分级（ 实现 RedisMemoryStore）。
  */
 public enum MemoryLevel {
     /** 工作记忆：当前任务上下文，TTL 最短 */

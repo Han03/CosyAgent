@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 任务存储契约（Step 6 状态持久化）：任务主记录 + 执行轨迹（审计）。
+ * 任务存储契约（ 状态持久化）：任务主记录 + 执行轨迹（审计）。
  *
  * <p>持久化层抽象，提供两种实现：
  * {@code InMemoryTaskStore}（默认，无外部依赖，供单测与轻量运行）与

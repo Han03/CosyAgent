@@ -15,8 +15,8 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientException;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -238,9 +238,9 @@ public class ModelRouter {
                 if (templateOptions.getModel() != null) {
                     req.put("model", templateOptions.getModel());
                 }
-                var tools = templateOptions.getTools();
+                var tools = templateOptions.getToolCallbacks();
                 if (tools != null && !tools.isEmpty()) {
-                    req.put("tools", tools);
+                    req.put("tools", tools.stream().map(ModelRouter::toolRecord).toList());
                 }
             }
             return objectMapper.writeValueAsString(req);
@@ -289,6 +289,16 @@ public class ModelRouter {
         }
     }
 
+    /** ToolCallback → 调用记录用工具描述（name/description/parameters schema） */
+    private static Map<String, Object> toolRecord(ToolCallback callback) {
+        ToolDefinition td = callback.getToolDefinition();
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("name", td.name());
+        record.put("description", td.description());
+        record.put("parameters", td.inputSchema());
+        return record;
+    }
+
     private ChatResponse callCandidate(RouteConfig cfg, String candidate, Prompt prompt) {
         RouteConfig.ModelPlatform platform = cfg.platformFor(candidate)
                 .orElseThrow(() -> new IllegalArgumentException("候选平台未注册: " + candidate));
@@ -297,7 +307,7 @@ public class ModelRouter {
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(modelName)
                 .temperature(templateOptions.getTemperature())
-                .tools(dynamicTools())
+                .toolCallbacks(dynamicTools())
                 .build();
         Prompt candidatePrompt = new Prompt(prompt.getInstructions(), options);
         // 每个候选独立套 llm 容错（重试/熔断/限流/超时）；候选间降级在链层，不重复重试
@@ -308,62 +318,34 @@ public class ModelRouter {
      * 动态工具定义：每次调用从 ToolRegistry 实时读取（本地工具 + 动态注册的能力），
      * 覆盖装配期静态快照——能力注册/摘除后，模型下一轮即可见/不可见，无需重启。
      */
-    private List<org.springframework.ai.openai.api.OpenAiApi.FunctionTool> dynamicTools() {
+    private List<ToolCallback> dynamicTools() {
         if (toolRegistry == null) {
-            return templateOptions.getTools();
+            return templateOptions.getToolCallbacks();
         }
         return toolRegistry.all().stream()
-                .map(com.cosy.agent.agent.tool.AgentToolBridging::toFunctionTool)
+                .map(com.cosy.agent.agent.tool.AgentToolBridging::toToolCallback)
                 .toList();
     }
 
-    /** 可降级异常判定：连接失败 / 超时 / 5xx / 429 / 熔断打开 → true；4xx 等 → false */
+    /** 可降级异常判定：连接失败 / 超时 / 5xx / 429 / 熔断打开 → true；4xx 等客户端错误 → false
+     *  （Spring AI 2.0 底层为 openai-java SDK：网络 IO 抛 OpenAIIoException，HTTP 错误抛
+     *   OpenAIServiceException（含 statusCode），429/5xx 可降级切候选） */
     private boolean isFallbackable(Throwable e) {
         Throwable current = e;
         while (current != null && current.getCause() != current) {
             if (current instanceof CallNotPermittedException
                     || current instanceof TimeoutException
-                    || current instanceof ResourceAccessException) {
+                    || current instanceof com.openai.errors.OpenAIIoException
+                    || current instanceof com.openai.errors.OpenAIRetryableException) {
                 return true;
             }
-            if (current instanceof RestClientException) {
-                Integer status = httpStatus(current);
-                if (status != null) {
-                    return status >= 500 || status == 429;
-                }
-                return true; // 无状态码的 RestClient 异常按网络/协议错误处理
+            if (current instanceof com.openai.errors.OpenAIServiceException se) {
+                int status = se.statusCode();
+                return status >= 500 || status == 429;
             }
             current = current.getCause();
         }
         return false;
-    }
-
-    private Integer httpStatus(Throwable e) {
-        try {
-            var method = e.getClass().getMethod("getStatusCode");
-            if (method != null && method.getReturnType().getName().contains("HttpStatusCode")) {
-                Object value = method.invoke(e);
-                if (value instanceof org.springframework.http.HttpStatusCode status) {
-                    return status.value();
-                }
-            }
-        } catch (Exception ignored) {
-            // 反射失败按未知状态处理
-        }
-        // Spring 6.1+ 常见实现：RestClientResponseException 带 statusCode / getStatusCode().value()
-        Throwable current = e;
-        while (current != null && current.getCause() != current) {
-            try {
-                java.lang.reflect.Method m = current.getClass().getMethod("getStatusCode");
-                if (m.getReturnType().isPrimitive() || m.getReturnType() == Integer.class) {
-                    return (Integer) m.invoke(current);
-                }
-            } catch (Exception ignored) {
-                // continue
-            }
-            current = current.getCause();
-        }
-        return null;
     }
 
     private String classify(Throwable e) {
@@ -375,12 +357,14 @@ public class ModelRouter {
             if (current instanceof TimeoutException) {
                 return "调用超时";
             }
-            if (current instanceof ResourceAccessException) {
+            if (current instanceof com.openai.errors.OpenAIIoException) {
                 return "连接失败: " + current.getMessage();
             }
-            if (current instanceof RestClientException) {
-                Integer status = httpStatus(current);
-                return "HTTP " + (status == null ? "未知" : status) + ": " + current.getMessage();
+            if (current instanceof com.openai.errors.OpenAIRetryableException) {
+                return "可重试错误（SDK 重试后仍失败）: " + current.getMessage();
+            }
+            if (current instanceof com.openai.errors.OpenAIServiceException se) {
+                return "HTTP " + se.statusCode() + ": " + se.getMessage();
             }
             current = current.getCause();
         }

@@ -25,11 +25,11 @@ import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 /**
- * 容错支持（Step 5）：对四类外部调用（LLM/工具/记忆/知识检索）统一施加
+ * 容错支持：对四类外部调用（LLM/工具/记忆/知识检索）统一施加
  * Resilience4j 组合策略 —— Retry → CircuitBreaker → RateLimiter → Bulkhead → TimeLimiter（外→内）。
  *
  * <p>实例按命名约定从各 Registry 查找（{@code <target>-retry / -cb / -ratelimit / -bulkhead / -timelimiter}），
- * 未配置的组件自动跳过（默认无容错，行为与 Step 4 前一致）；策略参数全部由
+ * 未配置的组件自动跳过（默认无容错，行为与  前一致）；策略参数全部由
  * resilience4j.* YAML（环境变量可覆盖）声明式管理，指标经 Actuator 暴露。</p>
  */
 @Component

@@ -1,5 +1,5 @@
 /**
- * 工具层（Step 2）：模型自主选择、宿主安全执行的函数调用能力。
+ * 工具层：模型自主选择、宿主安全执行的函数调用能力。
  *
  * <p><b>包内阅读顺序</b></p>
  * <ol>
@@ -7,7 +7,7 @@
  *   <li>{@link com.cosy.agent.agent.tool.ToolRegistry} —— 工具注册表（Spring 自动收集 + 手工注册）</li>
  *   <li>{@link com.cosy.agent.agent.tool.ServerTimeTool} / {@link com.cosy.agent.agent.tool.ServerInfoTool} —— 示例工具</li>
  *   <li>{@link com.cosy.agent.agent.tool.AgentToolBridging} —— 桥接层：把 AgentTool 转为 LLM 的
- *       FunctionTool（JSON Schema），注入模型 ChatOptions</li>
+ *       ToolCallback（JSON Schema 定义），注入模型 ChatOptions（Spring AI 2.0 工具体系）</li>
  * </ol>
  *
  * <p><b>被依赖</b>：agent.core.DefaultReActAgent 执行工具时经 ToolRegistry 查找；

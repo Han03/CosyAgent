@@ -5,7 +5,7 @@ import java.util.Map;
 /**
  * 工具契约：Agent 能力的外化载体。
  *
- * <p>Step 2 将把 {@link ToolRegistry} 中的工具桥接到 Spring AI 的
+ * <p>将把 {@link ToolRegistry} 中的工具桥接到 Spring AI 的
  * ToolCallback（@Tool），供 LLM 自主选择与调用。</p>
  */
 public interface AgentTool {
@@ -24,7 +24,7 @@ public interface AgentTool {
         return Map.of();
     }
 
-    /** 是否幂等可重试（Step 5）：只读/幂等工具返回 true，重试安全；默认 false（不重试） */
+    /** 是否幂等可重试：只读/幂等工具返回 true，重试安全；默认 false（不重试） */
     default boolean retryable() {
         return false;
     }

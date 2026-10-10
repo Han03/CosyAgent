@@ -22,6 +22,6 @@ public interface MemoryStore {
 
     List<MemoryRecord> list(MemoryLevel level, String namespace);
 
-    /** 按内容检索（Step 3 关键词过滤，Step 4 升级为向量化语义检索） */
+    /** 按内容检索（ 关键词过滤， 升级为向量化语义检索） */
     List<MemoryRecord> search(MemoryLevel level, String namespace, String query, int topK);
 }

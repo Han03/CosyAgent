@@ -12,7 +12,7 @@ import java.io.IOException;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * API 密钥鉴权过滤器单测（Step 6）：正确密钥放行、缺失/错误密钥 401、非 /api 路径放行。
+ * API 密钥鉴权过滤器单测：正确密钥放行、缺失/错误密钥 401、非 /api 路径放行。
  */
 class ApiKeyFilterTest {
 
