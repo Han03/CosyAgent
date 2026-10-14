@@ -1,0 +1,40 @@
+server:
+  port: 8281
+
+spring:
+  application:
+    name: cosy-knowledge
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        ip: ${NACOS_IP:127.0.0.1}
+        graceful-shutdown-wait-time: 0
+
+cosy:
+  agent:
+    vector:
+      # 知识检索：store=memory 为内存实现（无外部依赖，默认）；store=pgvector 走 PostgreSQL
+      store: ${COSY_AGENT_VECTOR_STORE:memory}
+      namespace: ${COSY_AGENT_VECTOR_NAMESPACE:default}
+      top-k: ${COSY_AGENT_VECTOR_TOP_K:5}
+      min-score: ${COSY_AGENT_VECTOR_MIN_SCORE:0.15}
+      chunk-size: ${COSY_AGENT_VECTOR_CHUNK_SIZE:600}
+      overlap: ${COSY_AGENT_VECTOR_OVERLAP:50}
+      pg:
+        url: ${COSY_AGENT_VECTOR_PG_URL:jdbc:postgresql://localhost:5432/cosy}
+        username: ${COSY_AGENT_VECTOR_PG_USER:postgres}
+        password: ${COSY_AGENT_VECTOR_PG_PASSWORD:postgres}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  file:
+    name: C:/app/logs/cosy-knowledge.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{tid}] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{tid}] %-5level %logger{36} - %msg%n"

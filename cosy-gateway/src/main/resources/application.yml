@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: cosy-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        ip: ${NACOS_IP:127.0.0.1}
+        graceful-shutdown-wait-time: 0
+    gateway:
+      # SSE 透传：长连接不截断（mock 全延迟 20s 场景上限），默认无响应超时则加大兜底
+      httpclient:
+        response-timeout: 120s
+      server:
+        webflux:
+          httpclient:
+            response-timeout: 120s
+
+# 网关 API 鉴权：与 agent 的 cosy.agent.security.api-key 语义一致（空=不校验，本地开发）
+cosy:
+  gateway:
+    security:
+      api-key: ${COSY_GATEWAY_API_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  file:
+    name: C:/app/logs/cosy-gateway.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{tid}] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{tid}] %-5level %logger{36} - %msg%n"

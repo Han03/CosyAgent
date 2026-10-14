@@ -1,0 +1,59 @@
+server:
+  port: 8282
+
+spring:
+  application:
+    name: cosy-capability
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+    stream:
+      # P4.1：能力变更事件发布（topic capability-change；agent 订阅后即时同步工具清单）
+      rocketmq:
+        binder:
+          name-server: ${ROCKETMQ_NAMESRV:127.0.0.1:9876}
+      bindings:
+        capability-change-out:
+          destination: capability-change
+          content-type: application/json
+  datasource:
+    # CP 能力落库（与 agent 同 cosy 库同表，继承既有 provider 数据）
+    url: ${COSY_CAPABILITY_DB_URL:jdbc:mysql://localhost:3306/cosy?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${COSY_CAPABILITY_DB_USER:root}
+    password: ${COSY_CAPABILITY_DB_PASSWORD:123456}
+
+cosy:
+  agent:
+    capability:
+      # 独立服务默认开启注册与动态工具清单能力（agent 侧注入由该服务 listTools 驱动）
+      enabled: ${COSY_AGENT_CAPABILITY_ENABLED:true}
+      # 注册鉴权令牌（X-Capability-Token；空 = 不校验，本地开发可用）
+      token: ${COSY_AGENT_CAPABILITY_TOKEN:}
+      # 注册未声明 mode 时的兜底：ap（临时/心跳摘除）| cp（持久/显式注销）
+      default-mode: ${COSY_AGENT_CAPABILITY_DEFAULT_MODE:ap}
+      heartbeat:
+        interval: ${COSY_AGENT_CAPABILITY_HEARTBEAT_INTERVAL:5s}
+        suspect-after: ${COSY_AGENT_CAPABILITY_HEARTBEAT_SUSPECT_AFTER:15s}
+        expire-after: ${COSY_AGENT_CAPABILITY_HEARTBEAT_EXPIRE_AFTER:30s}
+      probe:
+        enabled: ${COSY_AGENT_CAPABILITY_PROBE_ENABLED:true}
+        interval: ${COSY_AGENT_CAPABILITY_PROBE_INTERVAL:60s}
+      namespace: ${COSY_AGENT_CAPABILITY_NAMESPACE:default}
+      # 远程能力调用超时（RestClient 读超时；候选链降级在 call 层）
+      call-timeout: ${COSY_AGENT_CAPABILITY_CALL_TIMEOUT:5s}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  file:
+    name: C:/app/logs/cosy-capability.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{tid}] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{tid}] %-5level %logger{36} - %msg%n"
+  level:
+    com.cosy.capability: DEBUG
